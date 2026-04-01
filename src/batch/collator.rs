@@ -25,6 +25,7 @@
 
 use serde_json::Value as JsonValue;
 use candle_core::{Device, Tensor};
+use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::batch::preprocessed::{PreprocessedBatch, TokenMapping};
 use crate::error::{GlinerError, Result};
@@ -74,8 +75,10 @@ pub type CollateSample = (String, JsonValue);
 /// * `max_len` - Optional maximum token length for truncation.
 #[derive(Debug, Clone)]
 pub struct ExtractorCollator {
-    /// The whitespace tokenizer.
+    /// The whitespace tokenizer for span boundary detection.
     tokenizer: WhitespaceTokenizer,
+    /// HuggingFace tokenizer for token ID generation (optional).
+    hf_tokenizer: Option<std::sync::Arc<HfTokenizer>>,
     /// Whether in training mode.
     is_training: bool,
     /// Maximum token length (None = no limit).
@@ -92,6 +95,7 @@ impl ExtractorCollator {
     pub fn new(tokenizer: WhitespaceTokenizer, is_training: bool) -> Self {
         Self {
             tokenizer,
+            hf_tokenizer: None,
             is_training,
             max_len: None,
         }
@@ -111,6 +115,29 @@ impl ExtractorCollator {
     ) -> Self {
         Self {
             tokenizer,
+            hf_tokenizer: None,
+            is_training,
+            max_len,
+        }
+    }
+
+    /// Create a new collator with a HuggingFace tokenizer.
+    ///
+    /// # Arguments
+    ///
+    /// * `tokenizer` - The whitespace tokenizer for span boundaries.
+    /// * `hf_tokenizer` - HuggingFace tokenizer for token ID generation.
+    /// * `is_training` - Whether in training mode.
+    /// * `max_len` - Optional maximum token length.
+    pub fn with_hf_tokenizer(
+        tokenizer: WhitespaceTokenizer,
+        hf_tokenizer: HfTokenizer,
+        is_training: bool,
+        max_len: Option<usize>,
+    ) -> Self {
+        Self {
+            tokenizer,
+            hf_tokenizer: Some(std::sync::Arc::new(hf_tokenizer)),
             is_training,
             max_len,
         }
@@ -233,7 +260,7 @@ impl ExtractorCollator {
 
     /// Process a single sample into tokenized form.
     fn process_sample(&self, text: &str, schema: &JsonValue) -> Result<ProcessedSample> {
-        // Tokenize text
+        // Tokenize text with whitespace tokenizer for span boundaries
         let tokens = self.tokenizer.tokenize(text);
         let text_tokens: Vec<String> = tokens.iter().map(|t| t.text.clone()).collect();
         let (start_mapping, end_mapping) = WhitespaceTokenizer::build_mappings(&tokens);
@@ -252,40 +279,101 @@ impl ExtractorCollator {
         // Encode schema into token sequences
         let schema_result = self.encode_schema(schema, truncated_tokens.len())?;
 
-        // Build input sequence: [CLS] + schema_tokens + [SEP] + text_tokens + [SEP]
-        // Note: Actual tokenization depends on the model's tokenizer
-        // For now, we use placeholder token IDs (in real implementation, these would come from the HF tokenizer)
+        // Build input sequence using HuggingFace tokenizer when available
         let mut input_ids: Vec<i64> = Vec::new();
         let mut mapped_indices: Vec<TokenMapping> = Vec::new();
         let mut text_word_indices: Vec<i64> = Vec::new();
         let mut schema_special_indices: Vec<Vec<usize>> = Vec::new();
 
-        // Add schema tokens (placeholder IDs - would be actual token IDs from tokenizer)
-        let schema_start = input_ids.len();
-        for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
-            let schema_start_pos = input_ids.len();
-            for token in schema_tokens {
-                // In real implementation, convert token to ID using tokenizer
-                // For now, use placeholder
-                input_ids.push(self.token_to_id(token));
+        if self.hf_tokenizer.is_some() {
+            // Use HF tokenizer for proper token IDs
+            // Build the full text sequence: schema_tokens + [SEP] + text_tokens + [SEP]
+            let mut full_text_parts: Vec<String> = Vec::new();
+            let mut schema_token_positions: Vec<Vec<usize>> = Vec::new();
+
+            // Add schema tokens
+            for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
+                let schema_start_pos = full_text_parts.len();
+                for token in schema_tokens {
+                    full_text_parts.push(token.clone());
+                }
+                let schema_end_pos = full_text_parts.len();
+                schema_special_indices.push((schema_start_pos..schema_end_pos).collect());
             }
-            let schema_end_pos = input_ids.len();
-            schema_special_indices.push((schema_start_pos..schema_end_pos).collect());
+
+            // Add separator
+            full_text_parts.push("[SEP]".to_string());
+
+            // Add text tokens
+            let text_start_pos = full_text_parts.len();
+            for token in truncated_tokens {
+                full_text_parts.push(token.clone());
+            }
+
+            // Add final separator
+            full_text_parts.push("[SEP]".to_string());
+
+            // Join with spaces and encode
+            let full_text = full_text_parts.join(" ");
+            let (encoded_ids, _) = self.encode_text_with_subwords(&full_text)?;
+            input_ids = encoded_ids;
+
+            // Map text word indices to subword positions
+            for (token_idx, _) in truncated_tokens.iter().enumerate() {
+                // Find the first subword position for this text token
+                // The text starts after schema tokens + [SEP]
+                let text_offset = schema_result.schema_tokens_list.iter().map(|s| s.len()).sum::<usize>() + 1; // +1 for [SEP]
+                // With HF tokenizer, each whitespace token may become multiple subwords
+                // We track the first subword position for each text token
+                if let Some(hf_tok) = &self.hf_tokenizer {
+                    if let Ok(encoding) = hf_tok.encode(full_text.as_str(), true) {
+                        let offsets = encoding.get_offsets();
+                        // Find subword positions that correspond to text tokens
+                        let mut current_text_token_idx = 0;
+                        for (subword_idx, (sub_start, sub_end)) in offsets.iter().enumerate() {
+                            if current_text_token_idx < truncated_tokens.len() {
+                                let token_text = &truncated_tokens[current_text_token_idx];
+                                // Check if this subword overlaps with the current text token
+                                if sub_start < sub_end {
+                                    text_word_indices.push(subword_idx as i64);
+                                    current_text_token_idx += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Map indices for text tokens
+            for (token_idx, _) in truncated_tokens.iter().enumerate() {
+                mapped_indices.push(("text".to_string(), 0, token_idx));
+            }
+        } else {
+            // Fallback: use placeholder token IDs
+            let schema_start = input_ids.len();
+            for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
+                let schema_start_pos = input_ids.len();
+                for token in schema_tokens {
+                    input_ids.push(self.token_to_id(token));
+                }
+                let schema_end_pos = input_ids.len();
+                schema_special_indices.push((schema_start_pos..schema_end_pos).collect());
+            }
+
+            // Add separator
+            input_ids.push(self.token_to_id("[SEP]"));
+
+            // Add text tokens
+            let text_start = input_ids.len();
+            for (token_idx, token) in truncated_tokens.iter().enumerate() {
+                input_ids.push(self.token_to_id(token));
+                mapped_indices.push(("text".to_string(), 0, token_idx));
+                text_word_indices.push(input_ids.len() as i64 - 1);
+            }
+
+            // Add final separator
+            input_ids.push(self.token_to_id("[SEP]"));
         }
-
-        // Add separator
-        input_ids.push(self.token_to_id("[SEP]"));
-
-        // Add text tokens
-        let text_start = input_ids.len();
-        for (token_idx, token) in truncated_tokens.iter().enumerate() {
-            input_ids.push(self.token_to_id(token));
-            mapped_indices.push(("text".to_string(), 0, token_idx));
-            text_word_indices.push(input_ids.len() as i64 - 1);
-        }
-
-        // Add final separator
-        input_ids.push(self.token_to_id("[SEP]"));
 
         Ok(ProcessedSample {
             input_ids,
@@ -540,15 +628,68 @@ impl ExtractorCollator {
         tokens
     }
 
-    /// Convert a token string to token ID.
+    /// Convert a token string to a token ID using the HuggingFace tokenizer.
     ///
-    /// In the full implementation, this would use the HuggingFace tokenizer.
-    /// For now, this is a placeholder that returns a hash-based ID.
+    /// If a HuggingFace tokenizer is available, it encodes the token and returns
+    /// the first token ID. Otherwise, falls back to a hash-based placeholder.
     fn token_to_id(&self, token: &str) -> i64 {
-        // Simple hash-based placeholder
-        // In real implementation, use self.tokenizer.encode() or similar
+        if let Some(hf_tok) = &self.hf_tokenizer {
+            if let Ok(encoding) = hf_tok.encode(token, false) {
+                if let Some(&id) = encoding.get_ids().first() {
+                    return id as i64;
+                }
+            }
+        }
+        // Fallback: hash-based placeholder
         let hash = token.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-        (hash % 30522) as i64 // BERT vocab size
+        (hash % 30522) as i64
+    }
+
+    /// Encode a full text string and return token IDs with subword tracking.
+    ///
+    /// Returns (input_ids, text_word_first_positions, schema_special_positions).
+    /// text_word_first_positions maps each whitespace token to its first subword position.
+    fn encode_text_with_subwords(&self, text: &str) -> Result<(Vec<i64>, Vec<usize>)> {
+        if let Some(hf_tok) = &self.hf_tokenizer {
+            let encoding = hf_tok.encode(text, true)
+                .map_err(|e| GlinerError::batch_processing(format!("HF tokenizer encode failed: {e}")))?;
+
+            let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
+
+            // Map whitespace token boundaries to subword positions
+            let whitespace_tokens = self.tokenizer.tokenize(text);
+            let mut text_word_first_positions = Vec::with_capacity(whitespace_tokens.len());
+
+            // Get word offsets from encoding
+            let word_offsets: Vec<(usize, usize)> = encoding.get_offsets().iter()
+                .map(|&(start, end)| (start, end))
+                .collect();
+
+            // For each whitespace token, find the first subword position that overlaps with it
+            for ws_token in &whitespace_tokens {
+                let ws_start = ws_token.start;
+                let ws_end = ws_token.end;
+
+                // Find first subword that overlaps with this whitespace token
+                for (subword_idx, (sub_start, sub_end)) in word_offsets.iter().enumerate() {
+                    // Check overlap: subword overlaps with whitespace token
+                    if *sub_start < ws_end && *sub_end > ws_start {
+                        text_word_first_positions.push(subword_idx);
+                        break;
+                    }
+                }
+            }
+
+            Ok((ids, text_word_first_positions))
+        } else {
+            // Fallback: no HF tokenizer, use whitespace tokens as-is
+            let whitespace_tokens = self.tokenizer.tokenize(text);
+            let ids: Vec<i64> = whitespace_tokens.iter()
+                .map(|t| self.token_to_id(&t.text))
+                .collect();
+            let text_word_first_positions: Vec<usize> = (0..ids.len()).collect();
+            Ok((ids, text_word_first_positions))
+        }
     }
 }
 
