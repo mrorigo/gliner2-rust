@@ -20,7 +20,7 @@
 //! let classifier = ClassifierHead::new(hidden_size, Device::Cpu)?;
 //!
 //! // Schema embeddings: (num_labels, hidden_size)
-//! let schema_embs = Tensor::randn(0.0, 1.0, (3, hidden_size), &Device::Cpu)?;
+//! let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, hidden_size), &Device::Cpu)?;
 //!
 //! let output = classifier.forward(&schema_embs)?;
 //! // logits shape: (3,)
@@ -112,7 +112,11 @@ impl ClassifierOutput {
 
         match effective_activation {
             Activation::Sigmoid => candle_nn::ops::sigmoid(&self.logits).map_err(|e| GlinerError::model_loading(format!("Sigmoid activation failed: {e}"))),
-            Activation::Softmax => candle_nn::ops::softmax(&self.logits, 1).map_err(|e| GlinerError::model_loading(format!("Softmax activation failed: {e}"))),
+            Activation::Softmax => {
+                // Logits are squeezed to 1D (num_labels,), so softmax on dim 0
+                let dim = if self.logits.dims().len() == 1 { 0 } else { 1 };
+                candle_nn::ops::softmax(&self.logits, dim).map_err(|e| GlinerError::model_loading(format!("Softmax activation failed: {e}")))
+            }
             Activation::None => Ok(self.logits.clone()),
             Activation::Auto => unreachable!(),
         }
@@ -342,7 +346,7 @@ mod tests {
     #[test]
     fn test_classifier_forward() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         let output = classifier.forward(&schema_embs);
         assert!(output.is_ok());
@@ -354,7 +358,7 @@ mod tests {
     #[test]
     fn test_classifier_forward_with_activation() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         // Test sigmoid activation (multi-label)
         let output = classifier.forward_with_activation(&schema_embs, Activation::Sigmoid, true);
@@ -383,7 +387,7 @@ mod tests {
     #[test]
     fn test_classifier_auto_activation() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         // Multi-label should use sigmoid
         let output = classifier.forward_with_activation(&schema_embs, Activation::Auto, true);
@@ -408,9 +412,9 @@ mod tests {
     fn test_classifier_batch() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
         let embs_list = vec![
-            Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap(),
-            Tensor::randn(0.0, 1.0, (5, 768), &Device::Cpu).unwrap(),
-            Tensor::randn(0.0, 1.0, (2, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0f32, 1.0f32, (5, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0f32, 1.0f32, (2, 768), &Device::Cpu).unwrap(),
         ];
 
         let outputs = classifier.forward_batch(&embs_list);
@@ -427,7 +431,7 @@ mod tests {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
 
         // Wrong hidden size
-        let bad_embs = Tensor::randn(0.0, 1.0, (3, 512), &Device::Cpu).unwrap();
+        let bad_embs = Tensor::randn(0.0f32, 1.0f32, (3, 512), &Device::Cpu).unwrap();
         assert!(classifier.forward(&bad_embs).is_err());
 
         // Empty tensor

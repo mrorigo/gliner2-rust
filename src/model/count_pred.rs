@@ -26,7 +26,7 @@
 //! let layer = CountPredictionLayer::new(hidden_size, max_count, Device::Cpu)?;
 //!
 //! // Schema embedding: (1, hidden_size)
-//! let schema_emb = Tensor::randn(0.0, 1.0, (1, hidden_size), &Device::Cpu)?;
+//! let schema_emb = Tensor::randn(0.0f32, 1.0f32, (1, hidden_size), &Device::Cpu)?;
 //!
 //! let output = layer.predict_count(&schema_emb)?;
 //! println!("Predicted count: {}", output.count);
@@ -569,11 +569,11 @@ mod tests {
 
         let emb = embedding.forward(0);
         assert!(emb.is_ok());
-        assert_eq!(emb.unwrap().dims().unwrap(), &[1, 768]);
+        assert_eq!(emb.unwrap().dims(), &[1, 768]);
 
         let emb = embedding.forward(19);
         assert!(emb.is_ok());
-        assert_eq!(emb.unwrap().dims().unwrap(), &[1, 768]);
+        assert_eq!(emb.unwrap().dims(), &[1, 768]);
     }
 
     #[test]
@@ -582,7 +582,7 @@ mod tests {
 
         let embs = embedding.forward_batch(&[0, 5, 10, 19]);
         assert!(embs.is_ok());
-        assert_eq!(embs.unwrap().dims().unwrap(), &[4, 768]);
+        assert_eq!(embs.unwrap().dims(), &[4, 768]);
     }
 
     #[test]
@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn test_count_prediction_predict() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(0.0, 1.0, (1, 768), &Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0f32, 1.0f32, (1, 768), &Device::Cpu).unwrap();
 
         let output = layer.predict_count(&schema_emb);
         assert!(output.is_ok());
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn test_count_prediction_1d_input() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(0.0, 1.0, (768,), &Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0f32, 1.0f32, (768,), &Device::Cpu).unwrap();
 
         let output = layer.predict_count(&schema_emb);
         assert!(output.is_ok());
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn test_count_prediction_batch() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (5, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (5, 768), &Device::Cpu).unwrap();
 
         let outputs = layer.predict_count_batch(&schema_embs);
         assert!(outputs.is_ok());
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn test_count_prediction_invalid_hidden_size() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(0.0, 1.0, (1, 512), &Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0f32, 1.0f32, (1, 512), &Device::Cpu).unwrap();
 
         assert!(layer.predict_count(&schema_emb).is_err());
     }
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn test_count_prediction_compute_span_projection() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         let projected = layer.compute_span_projection(&schema_embs, 5);
         assert!(projected.is_ok());
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn test_count_prediction_zero_count_projection() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         assert!(layer.compute_span_projection(&schema_embs, 0).is_err());
     }
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn test_count_prediction_deterministic() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(0.0, 1.0, (1, 768), &Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0f32, 1.0f32, (1, 768), &Device::Cpu).unwrap();
 
         let output1 = layer.predict_count(&schema_emb).unwrap();
         let output2 = layer.predict_count(&schema_emb).unwrap();

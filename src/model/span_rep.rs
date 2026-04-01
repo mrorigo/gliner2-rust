@@ -25,7 +25,7 @@
 //! let layer = SpanRepresentationLayer::new(hidden_size, max_width, Device::Cpu)?;
 //!
 //! // Token embeddings: (seq_len, hidden_size)
-//! let token_embs = Tensor::randn(0.0, 1.0, (10, hidden_size), &Device::Cpu)?;
+//! let token_embs = Tensor::randn(0.0f32, 1.0f32, (10, hidden_size), &Device::Cpu)?;
 //!
 //! let result = layer.forward(&token_embs)?;
 //! // span_rep shape: (seq_len, max_width, hidden_size)
@@ -532,26 +532,26 @@ mod tests {
     #[test]
     fn test_span_rep_forward() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
-        let token_embs = Tensor::randn(0.0, 1.0, (10, 768), &Device::Cpu).unwrap();
+        let token_embs = Tensor::randn(0.0f32, 1.0f32, (10, 768), &Device::Cpu).unwrap();
 
         let result = layer.forward(&token_embs);
         assert!(result.is_ok());
         let result = result.unwrap();
 
-        assert_eq!(result.span_rep.dims().unwrap(), &[10, 8, 768]);
-        assert_eq!(result.spans_idx.dims().unwrap(), &[10, 8, 2]);
-        assert_eq!(result.span_mask.dims().unwrap(), &[10, 8]);
+        assert_eq!(result.span_rep.dims(), &[10, 8, 768]);
+        assert_eq!(result.spans_idx.dims(), &[10, 8, 2]);
+        assert_eq!(result.span_mask.dims(), &[10, 8]);
     }
 
     #[test]
     fn test_span_rep_forward_single_token() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
-        let token_embs = Tensor::randn(0.0, 1.0, (1, 768), &Device::Cpu).unwrap();
+        let token_embs = Tensor::randn(0.0f32, 1.0f32, (1, 768), &Device::Cpu).unwrap();
 
         let result = layer.forward(&token_embs).unwrap();
-        assert_eq!(result.span_rep.dims().unwrap(), &[1, 8, 768]);
-        assert_eq!(result.spans_idx.dims().unwrap(), &[1, 8, 2]);
-        assert_eq!(result.span_mask.dims().unwrap(), &[1, 8]);
+        assert_eq!(result.span_rep.dims(), &[1, 8, 768]);
+        assert_eq!(result.spans_idx.dims(), &[1, 8, 2]);
+        assert_eq!(result.span_mask.dims(), &[1, 8]);
 
         // Only width 0 should be valid for single token
         let mask_data: Vec<u32> = result.span_mask.flatten_all().unwrap().to_vec1().unwrap();
@@ -564,14 +564,19 @@ mod tests {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
         let token_embs = Tensor::zeros((0, 768), DType::F32, &Device::Cpu).unwrap();
 
+        // Empty input should succeed with empty output
         let result = layer.forward(&token_embs);
-        assert!(result.is_err()); // Should error on empty input
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.span_rep.dims(), &[0, 8, 768]);
+        assert_eq!(result.spans_idx.dims(), &[0, 8, 2]);
+        assert_eq!(result.span_mask.dims(), &[0, 8]);
     }
 
     #[test]
     fn test_span_rep_forward_wrong_hidden_size() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
-        let token_embs = Tensor::randn(0.0, 1.0, (10, 512), &Device::Cpu).unwrap();
+        let token_embs = Tensor::randn(0.0f32, 1.0f32, (10, 512), &Device::Cpu).unwrap();
 
         let result = layer.forward(&token_embs);
         assert!(result.is_err());
@@ -581,28 +586,28 @@ mod tests {
     fn test_span_rep_forward_batch() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
         let embs_list = vec![
-            Tensor::randn(0.0, 1.0, (10, 768), &Device::Cpu).unwrap(),
-            Tensor::randn(0.0, 1.0, (5, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0f32, 1.0f32, (10, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0f32, 1.0f32, (5, 768), &Device::Cpu).unwrap(),
         ];
 
         let results = layer.forward_batch(&embs_list);
         assert!(results.is_ok());
         let results = results.unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].span_rep.dims().unwrap(), &[10, 8, 768]);
-        assert_eq!(results[1].span_rep.dims().unwrap(), &[5, 8, 768]);
+        assert_eq!(results[0].span_rep.dims(), &[10, 8, 768]);
+        assert_eq!(results[1].span_rep.dims(), &[5, 8, 768]);
     }
 
     #[test]
     fn test_span_rep_compute_span_scores() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
-        let token_embs = Tensor::randn(0.0, 1.0, (10, 768), &Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
+        let token_embs = Tensor::randn(0.0f32, 1.0f32, (10, 768), &Device::Cpu).unwrap();
+        let schema_embs = Tensor::randn(0.0f32, 1.0f32, (3, 768), &Device::Cpu).unwrap();
 
         let scores = layer.compute_span_scores(&token_embs, &schema_embs);
         assert!(scores.is_ok());
         let scores = scores.unwrap();
-        assert_eq!(scores.dims().unwrap(), &[3, 10, 8]);
+        assert_eq!(scores.dims(), &[3, 10, 8]);
     }
 
     #[test]
@@ -624,7 +629,7 @@ mod tests {
     #[test]
     fn test_span_rep_deterministic() {
         let layer = SpanRepresentationLayer::new(768, 8, Device::Cpu).unwrap();
-        let token_embs = Tensor::randn(0.0, 1.0, (10, 768), &Device::Cpu).unwrap();
+        let token_embs = Tensor::randn(0.0f32, 1.0f32, (10, 768), &Device::Cpu).unwrap();
 
         let result1 = layer.forward(&token_embs).unwrap();
         let result2 = layer.forward(&token_embs).unwrap();
