@@ -20,3 +20,4 @@ pub mod preprocessed;
 // Re-export commonly used types
 pub use collator::ExtractorCollator;
 pub use preprocessed::PreprocessedBatch;
+pub use preprocessed::PreprocessedBatchBuilder;

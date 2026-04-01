@@ -213,12 +213,13 @@ impl GlinerError {
         expected_shape: Vec<usize>,
         actual_shape: Vec<usize>,
     ) -> Self {
+        let layer_name = layer_name.into();
         Self::WeightLoading {
             message: format!(
                 "Weight shape mismatch for layer '{}'",
-                layer_name.into()
+                layer_name
             ),
-            layer_name: layer_name.into(),
+            layer_name,
             expected_shape,
             actual_shape,
         }

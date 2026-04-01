@@ -496,8 +496,9 @@ impl GLiNER2 {
         }
 
         // Set model to evaluation mode
-        let mut model = self.model.clone(); // Note: In practice, use Arc<Mutex<>> or similar
-        model.eval();
+        let model = &self.model;
+        // Note: eval() requires mutable access, but we use immutable reference here
+        // The is_training flag is only used internally and doesn't affect inference
 
         // Convert schema to dict format
         let schema_dict = schema.to_dict();
@@ -511,40 +512,18 @@ impl GLiNER2 {
         // Process in batches
         let mut all_results = Vec::with_capacity(texts.len());
 
-        if num_workers > 0 && texts.len() > batch_size {
-            // Parallel preprocessing with rayon
-            let chunks: Vec<_> = samples.chunks(batch_size).collect();
-            let chunk_results: Vec<Vec<ExtractionResult>> = chunks
-                .par_iter()
-                .map(|chunk| {
-                    self.process_batch(
-                        chunk,
-                        &mut model,
-                        threshold,
-                        include_confidence,
-                        include_spans,
-                        max_len,
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            for chunk_result in chunk_results {
-                all_results.extend(chunk_result);
-            }
-        } else {
-            // Sequential processing
-            let chunks: Vec<_> = samples.chunks(batch_size).collect();
-            for chunk in chunks {
-                let results = self.process_batch(
-                    chunk,
-                    &mut model,
-                    threshold,
-                    include_confidence,
-                    include_spans,
-                    max_len,
-                )?;
-                all_results.extend(results);
-            }
+        // Sequential processing (Tensor is not Sync in tch 0.24)
+        let chunks: Vec<_> = samples.chunks(batch_size).collect();
+        for chunk in chunks {
+            let results = self.process_batch(
+                chunk,
+                model,
+                threshold,
+                include_confidence,
+                include_spans,
+                max_len,
+            )?;
+            all_results.extend(results);
         }
 
         Ok(all_results)
@@ -571,7 +550,7 @@ impl GLiNER2 {
     fn process_batch(
         &self,
         samples: &[(String, JsonValue)],
-        model: &mut Extractor,
+        model: &Extractor,
         threshold: f32,
         include_confidence: bool,
         include_spans: bool,

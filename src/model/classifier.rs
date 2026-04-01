@@ -143,6 +143,18 @@ pub struct ClassifierHead {
     device: Device,
 }
 
+impl Clone for ClassifierHead {
+    fn clone(&self) -> Self {
+        Self {
+            hidden_size: self.hidden_size,
+            weight: self.weight.shallow_clone(),
+            bias: self.bias.shallow_clone(),
+            dropout_prob: self.dropout_prob,
+            device: self.device,
+        }
+    }
+}
+
 impl ClassifierHead {
     /// Create a new classifier head.
     ///
@@ -194,18 +206,16 @@ impl ClassifierHead {
         let cls_path = vs / prefix;
 
         // Load weight
-        if let Ok(w) = cls_path.var(
+        let w = cls_path.var(
             "weight",
             &[1, self.hidden_size as i64],
-            nn::Init::KaimingUniform,
-        ) {
-            self.weight = w;
-        }
+            nn::init::DEFAULT_KAIMING_UNIFORM,
+        );
+        self.weight = w;
 
         // Load bias
-        if let Ok(b) = cls_path.var("bias", &[1], nn::Init::Const) {
-            self.bias = b;
-        }
+        let b = cls_path.var("bias", &[1], nn::Init::Const(0.0));
+        self.bias = b;
 
         Ok(())
     }
@@ -258,7 +268,7 @@ impl ClassifierHead {
         // weight shape: (1, hidden_size)
         // input shape: (..., hidden_size)
         // output shape: (..., 1)
-        let logits = input.matmul(&self.weight.t()).add(&self.bias);
+        let logits = input.matmul(&self.weight.transpose_copy(0, 1)) + &self.bias;
 
         // Squeeze the last dimension
         let logits = logits.squeeze_dim(-1);
@@ -423,7 +433,7 @@ mod tests {
         assert_eq!(probs.size(), &[3]);
 
         // Verify probabilities are in [0, 1] range
-        let probs_vec: Vec<f32> = probs.into();
+        let probs_vec: Vec<f32> = probs.try_into().unwrap();
         for p in &probs_vec {
             assert!(*p >= 0.0 && *p <= 1.0);
         }
@@ -433,7 +443,7 @@ mod tests {
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.into();
+        let probs_vec: Vec<f32> = probs.try_into().unwrap();
         let sum: f32 = probs_vec.iter().sum();
         assert!((sum - 1.0).abs() < 1e-5);
     }
@@ -448,7 +458,7 @@ mod tests {
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.into();
+        let probs_vec: Vec<f32> = probs.try_into().unwrap();
         // Sigmoid outputs are independent, sum won't be 1.0
         let sum: f32 = probs_vec.iter().sum();
         assert!(sum > 0.0);
@@ -458,7 +468,7 @@ mod tests {
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.into();
+        let probs_vec: Vec<f32> = probs.try_into().unwrap();
         let sum: f32 = probs_vec.iter().sum();
         assert!((sum - 1.0).abs() < 1e-5);
     }
@@ -507,7 +517,7 @@ mod tests {
 
         // Due to dropout, outputs should be different (with high probability)
         // Note: This test could theoretically fail due to randomness, but very unlikely
-        let diff = (&output1.logits - &output2.logits).abs().sum().double_value(&[]);
+        let diff = (&output1.logits - &output2.logits).abs().sum(None).double_value(&[]);
         assert!(diff > 0.0);
     }
 

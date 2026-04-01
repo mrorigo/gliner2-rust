@@ -154,7 +154,7 @@ impl Extractor {
             "cuda" => Device::Cuda(0),
             _ => {
                 if config.device.starts_with("cuda:") {
-                    let idx: i64 = config.device[5..]
+                    let idx: usize = config.device[5..]
                         .parse()
                         .map_err(|_| GlinerError::config(format!("Invalid CUDA device: {}", config.device)))?;
                     Device::Cuda(idx)
@@ -423,7 +423,7 @@ impl Extractor {
                 types.iter().any(|t| t != "classifications")
             });
 
-            if has_span_task && !token_embeddings[sample_idx].is_empty() {
+            if has_span_task && token_embeddings[sample_idx].numel() > 0 {
                 let span_output = self.span_rep.forward(&token_embeddings[sample_idx])?;
                 span_outputs.push(span_output);
             } else {
@@ -721,10 +721,10 @@ mod tests {
     use crate::batch::PreprocessedBatchBuilder;
 
     fn create_test_batch() -> PreprocessedBatch {
-        let input_ids = Tensor::of_slice(&[1, 2, 3, 4, 5, 6])
+        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4, 5, 6])
             .view((2, 3))
             .to_kind(Kind::Int64);
-        let attention_mask = Tensor::of_slice(&[1, 1, 1, 1, 1, 0])
+        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 1, 1, 0])
             .view((2, 3))
             .to_kind(Kind::Int64);
 
@@ -843,10 +843,10 @@ mod tests {
         let config = ExtractorConfig::default();
         let extractor = Extractor::new(&config).unwrap();
 
-        let input_ids = Tensor::of_slice(&[1, 2, 3, 4, 5, 6])
+        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4, 5, 6])
             .view((2, 3))
             .to_kind(Kind::Int64);
-        let attention_mask = Tensor::of_slice(&[1, 1, 1, 1, 1, 0])
+        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 1, 1, 0])
             .view((2, 3))
             .to_kind(Kind::Int64);
 

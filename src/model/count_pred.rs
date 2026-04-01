@@ -75,6 +75,17 @@ pub struct CountEmbedding {
     device: Device,
 }
 
+impl Clone for CountEmbedding {
+    fn clone(&self) -> Self {
+        Self {
+            max_count: self.max_count,
+            hidden_size: self.hidden_size,
+            embedding_table: self.embedding_table.shallow_clone(),
+            device: self.device,
+        }
+    }
+}
+
 impl CountEmbedding {
     /// Create a new count embedding layer.
     ///
@@ -107,13 +118,12 @@ impl CountEmbedding {
     pub fn init_from_varstore(&mut self, vs: &nn::Path, prefix: &str) -> Result<()> {
         let path = vs / prefix;
 
-        if let Ok(table) = path.var(
+        let table = path.var(
             "weight",
             &[self.max_count as i64, self.hidden_size as i64],
-            nn::Init::KaimingUniform,
-        ) {
-            self.embedding_table = table;
-        }
+            nn::init::DEFAULT_KAIMING_UNIFORM,
+        );
+        self.embedding_table = table;
 
         Ok(())
     }
@@ -208,6 +218,19 @@ pub struct CountPredictionLayer {
     device: Device,
 }
 
+impl Clone for CountPredictionLayer {
+    fn clone(&self) -> Self {
+        Self {
+            hidden_size: self.hidden_size,
+            max_count: self.max_count,
+            weight: self.weight.shallow_clone(),
+            bias: self.bias.shallow_clone(),
+            count_embedding: self.count_embedding.clone(),
+            device: self.device,
+        }
+    }
+}
+
 impl CountPredictionLayer {
     /// Create a new count prediction layer.
     ///
@@ -262,18 +285,16 @@ impl CountPredictionLayer {
         let path = vs / prefix;
 
         // Load weight
-        if let Ok(w) = path.var(
+        let w = path.var(
             "weight",
             &[self.max_count as i64, self.hidden_size as i64],
-            nn::Init::KaimingUniform,
-        ) {
-            self.weight = w;
-        }
+            nn::init::DEFAULT_KAIMING_UNIFORM,
+        );
+        self.weight = w;
 
         // Load bias
-        if let Ok(b) = path.var("bias", &[self.max_count as i64], nn::Init::Const) {
-            self.bias = b;
-        }
+        let b = path.var("bias", &[self.max_count as i64], nn::Init::Const(0.0));
+        self.bias = b;
 
         // Initialize count embedding
         self.count_embedding.init_from_varstore(vs, &format!("{prefix}_embedding"))?;
@@ -319,7 +340,7 @@ impl CountPredictionLayer {
         // input: (batch_size, hidden_size)
         // weight: (max_count, hidden_size)
         // output: (batch_size, max_count)
-        let logits = input.matmul(&self.weight.t()).add(&self.bias);
+        let logits = input.matmul(&self.weight.transpose_copy(0, 1)) + &self.bias;
 
         // Get predicted count (argmax)
         let count = if batch_size == 1 {

@@ -10,7 +10,7 @@ categories = ["science", "text-processing"]
 
 [dependencies]
 # Neural network inference
-tch = "0.17"
+tch = "0.24"
 
 # Tokenization
 tokenizers = { version = "0.20", features = ["onig"] }
@@ -34,7 +34,7 @@ half = { version = "2.4", features = ["serde"] }
 safetensors = "0.4"
 
 # HTTP client for model downloads
-ureq = { version = "2.9", features = ["json"] }
+ureq = { version = "2.9", features = ["json"], optional = true }
 
 # Parallel processing
 rayon = "1.10"
@@ -60,9 +60,9 @@ default = ["download"]
 download = ["ureq", "indicatif"]
 cuda = []
 
-[[bench]]
-name = "inference"
-harness = false
+# [[bench]]
+# name = "inference"
+# harness = false
 
 [profile.release]
 opt-level = 3

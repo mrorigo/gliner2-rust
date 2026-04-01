@@ -45,6 +45,8 @@ pub mod special_tokens {
     pub const L_TOKEN: &str = "[C]";
     /// Relation token.
     pub const R_TOKEN: &str = "[R]";
+    /// Structure/JSON token.
+    pub const C_TOKEN: &str = "[C]";
     /// Description token.
     pub const DESC_TOKEN: &str = "[DESCRIPTION]";
     /// Example token.
@@ -212,7 +214,7 @@ impl ExtractorCollator {
         };
 
         // Build the batch
-        PreprocessedBatch::new(
+        Ok(PreprocessedBatch::new(
             input_ids_tensor,
             attention_mask_tensor,
             all_mapped_indices,
@@ -229,7 +231,7 @@ impl ExtractorCollator {
             text_word_indices_tensor,
             all_text_word_counts,
             all_schema_special_indices,
-        )
+        ))
     }
 
     /// Process a single sample into tokenized form.
@@ -607,7 +609,7 @@ mod tests {
         let collator = ExtractorCollator::new(tokenizer, false);
         let schema = create_test_schema();
 
-        let samples = vec![("Apple CEO Tim Cook", schema)];
+        let samples = vec![(String::from("Apple CEO Tim Cook"), schema)];
         let batch = collator.collate(&samples);
 
         assert!(batch.is_ok());
@@ -623,9 +625,9 @@ mod tests {
         let schema = create_test_schema();
 
         let samples = vec![
-            ("Apple CEO Tim Cook", schema.clone()),
-            ("Google in Mountain View", schema.clone()),
-            ("Microsoft founded by Bill Gates", schema),
+            (String::from("Apple CEO Tim Cook"), schema.clone()),
+            (String::from("Google in Mountain View"), schema.clone()),
+            (String::from("Microsoft founded by Bill Gates"), schema),
         ];
 
         let batch = collator.collate(&samples);
@@ -650,7 +652,7 @@ mod tests {
         let collator = ExtractorCollator::with_max_len(tokenizer, false, Some(5));
         let schema = create_test_schema();
 
-        let long_text = "Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday";
+        let long_text = String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
         let samples = vec![(long_text, schema)];
         let batch = collator.collate(&samples);
 

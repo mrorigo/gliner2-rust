@@ -55,7 +55,7 @@ pub type TokenMapping = (String, usize, usize);
 /// // Move to device
 /// let batch = batch.to(Device::Cpu, None)?;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PreprocessedBatch {
     // -------------------------------------------------------------------------
     // Tensors (GPU-ready)
@@ -659,10 +659,10 @@ mod tests {
     use super::*;
 
     fn create_test_batch() -> PreprocessedBatch {
-        let input_ids = Tensor::of_slice(&[1, 2, 3, 4, 5, 6])
+        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4, 5, 6])
             .view((2, 3))
             .to_kind(tch::Kind::Int64);
-        let attention_mask = Tensor::of_slice(&[1, 1, 1, 1, 1, 0])
+        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 1, 1, 0])
             .view((2, 3))
             .to_kind(tch::Kind::Int64);
 
@@ -769,10 +769,10 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let input_ids = Tensor::of_slice(&[1, 2, 3, 4])
+        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4])
             .view((2, 2))
             .to_kind(tch::Kind::Int64);
-        let attention_mask = Tensor::of_slice(&[1, 1, 1, 0])
+        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 0])
             .view((2, 2))
             .to_kind(tch::Kind::Int64);
 

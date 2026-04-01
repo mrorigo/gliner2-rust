@@ -35,7 +35,7 @@ use std::collections::HashMap;
 ///
 /// This builder mirrors the Python `Schema` class and provides
 /// method chaining for convenient schema construction.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SchemaBuilder {
     schema: Schema,
     entity_order: Vec<String>,
@@ -44,7 +44,7 @@ pub struct SchemaBuilder {
     field_metadata: HashMap<String, FieldMetadata>,
     entity_metadata: HashMap<String, EntityMetadata>,
     relation_metadata: HashMap<String, RelationMetadata>,
-    active_structure: Option<StructureBuilder>,
+    active_structure: Option<Box<StructureBuilder>>,
 }
 
 /// Metadata for a field.
@@ -255,7 +255,7 @@ impl SchemaBuilder {
     pub fn structure(mut self, name: impl Into<String>) -> StructureBuilder {
         let name = name.into();
         StructureBuilder {
-            parent: self,
+            parent: Box::new(self),
             name,
             fields: Vec::new(),
             descriptions: HashMap::new(),
@@ -575,7 +575,7 @@ impl ClassificationBuilder {
 /// Builder for configuring a JSON structure.
 #[derive(Debug)]
 pub struct StructureBuilder {
-    parent: SchemaBuilder,
+    parent: Box<SchemaBuilder>,
     name: String,
     fields: Vec<FieldDef>,
     descriptions: HashMap<String, String>,
@@ -607,11 +607,16 @@ impl StructureBuilder {
     }
 
     /// Finish the structure and return to the schema builder.
-    pub fn done_structure(mut self) -> SchemaBuilder {
-        let structure = self.finish_structure();
-        self.parent.schema.structures.push(structure);
-        self.parent.store_field_order(&self.name, self.field_order);
-        self.parent
+    pub fn done_structure(self) -> SchemaBuilder {
+        let structure = StructureDef {
+            name: self.name.clone(),
+            fields: self.fields,
+            descriptions: self.descriptions,
+        };
+        let mut parent = *self.parent;
+        parent.schema.structures.push(structure);
+        parent.store_field_order(&self.name, self.field_order);
+        parent
     }
 
     /// Internal method to finish the structure.
@@ -675,8 +680,8 @@ impl FieldBuilder {
     pub fn done_field(mut self) -> StructureBuilder {
         let mut field = FieldDef::new(&self.name).with_dtype(self.dtype);
 
-        if let Some(choices) = self.choices {
-            field = field.with_choices(choices);
+        if let Some(ref choices) = self.choices {
+            field = field.with_choices(choices.clone());
         }
         if let Some(desc) = self.description {
             field = field.with_description(&desc);
@@ -685,8 +690,8 @@ impl FieldBuilder {
         if let Some(threshold) = self.threshold {
             field = field.with_threshold(threshold);
         }
-        if let Some(validators) = self.validators {
-            field = field.with_validators(validators);
+        if let Some(ref validators) = self.validators {
+            field = field.with_validators(validators.clone());
         }
 
         self.parent.fields.push(field);

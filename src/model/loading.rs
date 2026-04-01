@@ -218,8 +218,8 @@ impl ModelLoader {
         // Load each tensor
         let mut loaded_weights: HashMap<String, Tensor> = HashMap::new();
 
-        for tensor_view in safetensors.tensors() {
-            let name = tensor_view.name().to_string();
+        for (name, tensor_view) in safetensors.tensors() {
+            let name = name.to_string();
             let dtype = tensor_view.dtype();
             let shape: Vec<usize> = tensor_view.shape().iter().map(|&d| d as usize).collect();
             let data = tensor_view.data();
@@ -233,13 +233,15 @@ impl ModelLoader {
                 ))?;
 
             // Create tensor from bytes
-            let tensor = Tensor::from_blob(
-                data.as_ptr() as *const _,
-                &shape.iter().map(|&d| d as i64).collect::<Vec<_>>(),
-                &[],
-                kind,
-                self.device,
-            );
+            let tensor = unsafe {
+                Tensor::from_blob(
+                    data.as_ptr() as *const _,
+                    &shape.iter().map(|&d| d as i64).collect::<Vec<_>>(),
+                    &[],
+                    kind,
+                    self.device,
+                )
+            };
 
             // Apply weight name mapping
             let mapped_name = self.weight_map.get(&name).cloned().unwrap_or(name.clone());
@@ -283,20 +285,22 @@ impl ModelLoader {
                     e,
                 ))?;
 
-            for tensor_view in safetensors.tensors() {
-                let name = tensor_view.name().to_string();
+            for (name, tensor_view) in safetensors.tensors() {
+                let name = name.to_string();
                 let dtype = tensor_view.dtype();
                 let shape: Vec<usize> = tensor_view.shape().iter().map(|&d| d as usize).collect();
                 let data = tensor_view.data();
 
                 let kind = Self::safetensors_dtype_to_kind(dtype)?;
-                let tensor = Tensor::from_blob(
-                    data.as_ptr() as *const _,
-                    &shape.iter().map(|&d| d as i64).collect::<Vec<_>>(),
-                    &[],
-                    kind,
-                    self.device,
-                );
+                let tensor = unsafe {
+                    Tensor::from_blob(
+                        data.as_ptr() as *const _,
+                        &shape.iter().map(|&d| d as i64).collect::<Vec<_>>(),
+                        &[],
+                        kind,
+                        self.device,
+                    )
+                };
 
                 let mapped_name = self.weight_map.get(&name).cloned().unwrap_or(name);
                 all_weights.insert(mapped_name, tensor);
@@ -602,7 +606,7 @@ mod tests {
         // Check GLiNER2-specific weights
         assert!(weight_map.contains_key("span_rep.weight"));
         assert!(weight_map.contains_key("count_pred.weight"));
-        assert!(weight!(weight_map.contains_key("classifier.weight"));
+        assert!(weight_map.contains_key("classifier.weight"));
     }
 
     #[test]

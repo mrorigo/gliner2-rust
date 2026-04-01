@@ -89,6 +89,20 @@ pub struct SpanRepresentationLayer {
     device: Device,
 }
 
+impl Clone for SpanRepresentationLayer {
+    fn clone(&self) -> Self {
+        Self {
+            max_width: self.max_width,
+            hidden_size: self.hidden_size,
+            width_embedding: self.width_embedding.shallow_clone(),
+            layer_norm: self.layer_norm.as_ref().map(|t| t.shallow_clone()),
+            span_linear_w: self.span_linear_w.as_ref().map(|t| t.shallow_clone()),
+            span_linear_b: self.span_linear_b.as_ref().map(|t| t.shallow_clone()),
+            device: self.device,
+        }
+    }
+}
+
 impl SpanRepresentationLayer {
     /// Create a new span representation layer.
     ///
@@ -139,24 +153,19 @@ impl SpanRepresentationLayer {
         let span_path = vs / prefix;
 
         // Load width embeddings
-        if let Ok(weights) = span_path.var("width_embedding", &[self.max_width as i64, self.hidden_size as i64], Default::default()) {
-            self.width_embedding = weights;
-        }
+        let weights = span_path.var("width_embedding", &[self.max_width as i64, self.hidden_size as i64], nn::init::DEFAULT_KAIMING_UNIFORM);
+        self.width_embedding = weights;
 
         // Load layer norm if present
-        if let Ok(weight) = span_path.var("layer_norm.weight", &[self.hidden_size as i64], Default::default()) {
-            if let Ok(bias) = span_path.var("layer_norm.bias", &[self.hidden_size as i64], Default::default()) {
-                self.layer_norm = Some(Tensor::cat(&[&weight, &bias], 0));
-            }
-        }
+        let weight = span_path.var("layer_norm.weight", &[self.hidden_size as i64], nn::Init::Const(1.0));
+        let bias = span_path.var("layer_norm.bias", &[self.hidden_size as i64], nn::Init::Const(0.0));
+        self.layer_norm = Some(Tensor::cat(&[&weight, &bias], 0));
 
         // Load span linear if present
-        if let Ok(w) = span_path.var("span_linear.weight", &[self.hidden_size as i64, self.hidden_size as i64], Default::default()) {
-            if let Ok(b) = span_path.var("span_linear.bias", &[self.hidden_size as i64], Default::default()) {
-                self.span_linear_w = Some(w);
-                self.span_linear_b = Some(b);
-            }
-        }
+        let w = span_path.var("span_linear.weight", &[self.hidden_size as i64, self.hidden_size as i64], nn::init::DEFAULT_KAIMING_UNIFORM);
+        let b = span_path.var("span_linear.bias", &[self.hidden_size as i64], nn::Init::Const(0.0));
+        self.span_linear_w = Some(w);
+        self.span_linear_b = Some(b);
 
         Ok(())
     }
@@ -216,7 +225,7 @@ impl SpanRepresentationLayer {
             let span_rep = if let (Some(w), Some(b)) = (&self.span_linear_w, &self.span_linear_b) {
                 // With linear projection
                 let combined = Tensor::cat(&[&start_tokens, &end_tokens], 1);
-                combined.matmul(&w.t()).add(b)
+                combined.matmul(&w.transpose_copy(0, 1)) + b
             } else {
                 // Simple addition
                 let combined = &start_tokens + &end_tokens;
@@ -224,7 +233,7 @@ impl SpanRepresentationLayer {
             };
 
             // Pad to seq_len if needed
-            if span_rep.size()[0] as usize < seq_len {
+            if (span_rep.size()[0] as usize) < seq_len {
                 let pad_size = seq_len - span_rep.size()[0] as usize;
                 let padding = Tensor::zeros(&[pad_size as i64, self.hidden_size as i64], (Kind::Float, self.device));
                 let padded = Tensor::cat(&[&span_rep, &padding], 0);
@@ -241,7 +250,7 @@ impl SpanRepresentationLayer {
         let span_rep = if let Some(ln) = &self.layer_norm {
             let weight = ln.narrow(0, 0, self.hidden_size as i64);
             let bias = ln.narrow(0, self.hidden_size as i64, self.hidden_size as i64);
-            span_rep.layer_norm(&[self.hidden_size as i64], Some(&weight), Some(&bias), 1e-5)
+            span_rep.layer_norm(&[self.hidden_size as i64], Some(&weight), Some(&bias), 1e-5, false)
         } else {
             span_rep
         };
@@ -261,12 +270,12 @@ impl SpanRepresentationLayer {
         }
 
         let spans_idx = Tensor::from_slice(&spans_idx_data)
-            .view(&[seq_len as i64, self.max_width as i64, 2])
+            .view([seq_len as i64, self.max_width as i64, 2])
             .to_device(self.device)
             .to_kind(Kind::Int64);
 
         let span_mask = Tensor::from_slice(&span_mask_data)
-            .view(&[seq_len as i64, self.max_width as i64])
+            .view([seq_len as i64, self.max_width as i64])
             .to_device(self.device)
             .to_kind(Kind::Int64);
 
@@ -322,20 +331,21 @@ impl SpanRepresentationLayer {
         let num_schemas = schema_embs.size()[0];
 
         // Reshape span_rep to (seq_len * max_width, hidden_size)
-        let span_flat = span_rep.view(&[seq_len * max_width, self.hidden_size as i64]);
+        let span_flat = span_rep.view([seq_len * max_width, self.hidden_size as i64]);
 
         // Compute scores: schema_embs @ span_flat.T
         // Result: (num_schemas, seq_len * max_width)
-        let scores = schema_embs.matmul(&span_flat.t());
+        let scores = schema_embs.matmul(&span_flat.transpose_copy(0, 1));
 
         // Reshape to (num_schemas, seq_len, max_width)
-        let scores = scores.view(&[num_schemas, seq_len, max_width]);
+        let scores = scores.view([num_schemas, seq_len, max_width]);
 
         // Apply mask (set invalid spans to very negative value)
         let mask_expanded = span_mask
             .unsqueeze(0)
             .expand(&[num_schemas, seq_len, max_width], true);
-        let masked_scores = scores.where_self(&mask_expanded, &Tensor::ones(&[1], (Kind::Float, self.device)) * -1e9);
+        let neg_inf = Tensor::ones(&[1], (Kind::Float, self.device)) * -1e9;
+        let masked_scores = scores.where_self(&mask_expanded, &neg_inf);
 
         Ok(masked_scores)
     }
@@ -558,7 +568,7 @@ mod tests {
         // Width 4: position 0 valid
         // Width 5-7: no valid positions
 
-        let mask_data: Vec<i64> = mask.into();
+        let mask_data: Vec<i64> = mask.try_into().unwrap();
         let mut expected = vec![0i64; 5 * 8];
 
         for i in 0..5 {
