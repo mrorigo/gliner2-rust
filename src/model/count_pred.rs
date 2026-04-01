@@ -19,26 +19,27 @@
 //!
 //! ```ignore
 //! use gliner2_rust::model::CountPredictionLayer;
-//! use tch::{Tensor, Device, Kind};
+//! use candle_core::{Tensor, Device};
 //!
 //! let hidden_size = 768;
 //! let max_count = 20;
 //! let layer = CountPredictionLayer::new(hidden_size, max_count, Device::Cpu)?;
 //!
 //! // Schema embedding: (1, hidden_size)
-//! let schema_emb = Tensor::randn([1, hidden_size], (Kind::Float, Device::Cpu));
+//! let schema_emb = Tensor::randn(0.0, 1.0, (1, hidden_size), &Device::Cpu)?;
 //!
 //! let output = layer.predict_count(&schema_emb)?;
 //! println!("Predicted count: {}", output.count);
 //! ```
 
-use tch::{nn, nn::Module, Device, Kind, Tensor};
+use candle_core::{Device, DType, Tensor};
+use candle_nn::{Embedding, Linear, Module, VarBuilder};
 
 use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
 
 /// Output of the count prediction layer.
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct CountPredictionOutput {
     /// Raw count logits of shape `(1, max_count)`.
     pub logits: Tensor,
@@ -59,18 +60,27 @@ impl CountPredictionOutput {
     }
 }
 
+impl std::fmt::Debug for CountPredictionOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CountPredictionOutput")
+            .field("count", &self.count)
+            .field("logits_dims", &self.logits.dims())
+            .field("count_embedding_dims", &self.count_embedding.dims())
+            .finish()
+    }
+}
+
 /// Count embedding layer.
 ///
 /// This layer converts a count index into a dense embedding vector.
 /// It's used to embed the predicted count for use in span scoring.
-#[derive(Debug)]
 pub struct CountEmbedding {
     /// Maximum count value (exclusive).
     pub max_count: usize,
     /// Hidden size of the embeddings.
     pub hidden_size: usize,
-    /// Embedding table of shape `(max_count, hidden_size)`.
-    embedding_table: Tensor,
+    /// Embedding table.
+    embedding: Embedding,
     /// Device for tensor operations.
     device: Device,
 }
@@ -80,14 +90,24 @@ impl Clone for CountEmbedding {
         Self {
             max_count: self.max_count,
             hidden_size: self.hidden_size,
-            embedding_table: self.embedding_table.shallow_clone(),
-            device: self.device,
+            embedding: self.embedding.clone(),
+            device: self.device.clone(),
         }
     }
 }
 
+impl std::fmt::Debug for CountEmbedding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CountEmbedding")
+            .field("max_count", &self.max_count)
+            .field("hidden_size", &self.hidden_size)
+            .field("device", &self.device)
+            .finish()
+    }
+}
+
 impl CountEmbedding {
-    /// Create a new count embedding layer.
+    /// Create a new count embedding layer with random initialization.
     ///
     /// # Arguments
     ///
@@ -95,37 +115,43 @@ impl CountEmbedding {
     /// * `hidden_size` - Hidden size of the embeddings.
     /// * `device` - The device to place tensors on.
     pub fn new(max_count: usize, hidden_size: usize, device: Device) -> Result<Self> {
-        // Initialize embedding table with small random values
-        let embedding_table = Tensor::randn(
-            &[max_count as i64, hidden_size as i64],
-            (Kind::Float, device),
-        ) * 0.02;
+        let varmap = candle_nn::VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+
+        let embedding = candle_nn::embedding(max_count, hidden_size, vb.pp("count_embedding"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create count embedding: {e}")))?;
 
         Ok(Self {
             max_count,
             hidden_size,
-            embedding_table,
+            embedding,
             device,
         })
     }
 
-    /// Initialize from a VarStore.
+    /// Create a count embedding layer loaded from a VarBuilder.
     ///
     /// # Arguments
     ///
-    /// * `vs` - The variable store containing the weights.
-    /// * `prefix` - The prefix for weight names.
-    pub fn init_from_varstore(&mut self, vs: &nn::Path, prefix: &str) -> Result<()> {
-        let path = vs / prefix;
+    /// * `vb` - The VarBuilder containing the weights.
+    /// * `max_count` - Maximum count value (exclusive).
+    /// * `hidden_size` - Hidden size of the embeddings.
+    /// * `device` - The device to place tensors on.
+    pub fn from_var_builder(
+        vb: VarBuilder,
+        max_count: usize,
+        hidden_size: usize,
+        device: Device,
+    ) -> Result<Self> {
+        let embedding = candle_nn::embedding(max_count, hidden_size, vb.pp("count_embedding"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to load count embedding: {e}")))?;
 
-        let table = path.var(
-            "weight",
-            &[self.max_count as i64, self.hidden_size as i64],
-            nn::init::DEFAULT_KAIMING_UNIFORM,
-        );
-        self.embedding_table = table;
-
-        Ok(())
+        Ok(Self {
+            max_count,
+            hidden_size,
+            embedding,
+            device,
+        })
     }
 
     /// Forward pass: get embedding for a count index.
@@ -146,7 +172,11 @@ impl CountEmbedding {
         }
 
         // Get embedding for the count index
-        let embedding = self.embedding_table.narrow(0, count as i64, 1);
+        let indices = Tensor::new(&[count as u32], &self.device)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create count index tensor: {e}")))?;
+        let embedding = self.embedding.forward(&indices)
+            .map_err(|e| GlinerError::model_loading(format!("Count embedding forward failed: {e}")))?;
+
         Ok(embedding)
     }
 
@@ -174,21 +204,18 @@ impl CountEmbedding {
         }
 
         // Gather embeddings for all counts
-        let indices: Vec<i64> = counts.iter().map(|&c| c as i64).collect();
-        let indices_tensor = Tensor::from_slice(&indices).to_device(self.device);
-        let embeddings = self.embedding_table.index_select(0, &indices_tensor);
+        let indices: Vec<u32> = counts.iter().map(|&c| c as u32).collect();
+        let indices_tensor = Tensor::from_slice(&indices, (counts.len(),), &self.device)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create indices tensor: {e}")))?;
+        let embeddings = self.embedding.forward(&indices_tensor)
+            .map_err(|e| GlinerError::model_loading(format!("Count embedding batch forward failed: {e}")))?;
 
         Ok(embeddings)
     }
 
-    /// Get the embedding table.
-    pub fn embedding_table(&self) -> &Tensor {
-        &self.embedding_table
-    }
-
-    /// Set the embedding table.
-    pub fn set_embedding_table(&mut self, table: Tensor) {
-        self.embedding_table = table;
+    /// Get the device the embedding is on.
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 }
 
@@ -202,16 +229,13 @@ impl CountEmbedding {
 ///
 /// - Input: `(batch_size, hidden_size)` or `(hidden_size,)`
 /// - Output logits: `(batch_size, max_count)` or `(max_count,)`
-#[derive(Debug)]
 pub struct CountPredictionLayer {
     /// Hidden size of the input embeddings.
     pub hidden_size: usize,
     /// Maximum count value (exclusive).
     pub max_count: usize,
-    /// Linear layer weight of shape `(max_count, hidden_size)`.
-    weight: Tensor,
-    /// Linear layer bias of shape `(max_count,)`.
-    bias: Tensor,
+    /// Linear layer for count prediction (hidden_size -> max_count).
+    linear: Linear,
     /// Count embedding layer.
     count_embedding: CountEmbedding,
     /// Device for tensor operations.
@@ -223,16 +247,25 @@ impl Clone for CountPredictionLayer {
         Self {
             hidden_size: self.hidden_size,
             max_count: self.max_count,
-            weight: self.weight.shallow_clone(),
-            bias: self.bias.shallow_clone(),
+            linear: self.linear.clone(),
             count_embedding: self.count_embedding.clone(),
-            device: self.device,
+            device: self.device.clone(),
         }
     }
 }
 
+impl std::fmt::Debug for CountPredictionLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CountPredictionLayer")
+            .field("hidden_size", &self.hidden_size)
+            .field("max_count", &self.max_count)
+            .field("device", &self.device)
+            .finish()
+    }
+}
+
 impl CountPredictionLayer {
-    /// Create a new count prediction layer.
+    /// Create a new count prediction layer with random initialization.
     ///
     /// # Arguments
     ///
@@ -244,21 +277,23 @@ impl CountPredictionLayer {
     ///
     /// A new `CountPredictionLayer`.
     pub fn new(hidden_size: usize, max_count: usize, device: Device) -> Result<Self> {
-        let count_embedding = CountEmbedding::new(max_count, hidden_size, device)?;
+        let varmap = candle_nn::VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-        // Initialize linear layer weights
-        let weight = Tensor::randn(
-            &[max_count as i64, hidden_size as i64],
-            (Kind::Float, device),
-        ) * 0.02;
+        let count_embedding = CountEmbedding::from_var_builder(
+            vb.pp("count_embedding"),
+            max_count,
+            hidden_size,
+            device.clone(),
+        )?;
 
-        let bias = Tensor::zeros(&[max_count as i64], (Kind::Float, device));
+        let linear = candle_nn::linear(hidden_size, max_count, vb.pp("count_linear"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create count prediction linear layer: {e}")))?;
 
         Ok(Self {
             hidden_size,
             max_count,
-            weight,
-            bias,
+            linear,
             count_embedding,
             device,
         })
@@ -275,31 +310,38 @@ impl CountPredictionLayer {
         Self::new(config.hidden_size, 20, device)
     }
 
-    /// Initialize from a VarStore.
+    /// Create a count prediction layer loaded from a VarBuilder.
     ///
     /// # Arguments
     ///
-    /// * `vs` - The variable store containing the weights.
-    /// * `prefix` - The prefix for weight names.
-    pub fn init_from_varstore(&mut self, vs: &nn::Path, prefix: &str) -> Result<()> {
-        let path = vs / prefix;
+    /// * `vb` - The VarBuilder containing the weights.
+    /// * `config` - The extractor configuration.
+    /// * `device` - The device to place tensors on.
+    pub fn from_var_builder(
+        vb: VarBuilder,
+        config: &ExtractorConfig,
+        device: Device,
+    ) -> Result<Self> {
+        let hidden_size = config.hidden_size;
+        let max_count = 20; // Default max_count
 
-        // Load weight
-        let w = path.var(
-            "weight",
-            &[self.max_count as i64, self.hidden_size as i64],
-            nn::init::DEFAULT_KAIMING_UNIFORM,
-        );
-        self.weight = w;
+        let count_embedding = CountEmbedding::from_var_builder(
+            vb.pp("count_embedding"),
+            max_count,
+            hidden_size,
+            device.clone(),
+        )?;
 
-        // Load bias
-        let b = path.var("bias", &[self.max_count as i64], nn::Init::Const(0.0));
-        self.bias = b;
+        let linear = candle_nn::linear(hidden_size, max_count, vb.pp("count_linear"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to load count prediction weights: {e}")))?;
 
-        // Initialize count embedding
-        self.count_embedding.init_from_varstore(vs, &format!("{prefix}_embedding"))?;
-
-        Ok(())
+        Ok(Self {
+            hidden_size,
+            max_count,
+            linear,
+            count_embedding,
+            device,
+        })
     }
 
     /// Forward pass: predict count from schema embedding.
@@ -312,22 +354,30 @@ impl CountPredictionLayer {
     ///
     /// A `CountPredictionOutput` containing logits, predicted count, and count embedding.
     pub fn predict_count(&self, schema_emb: &Tensor) -> Result<CountPredictionOutput> {
-        let size = schema_emb.size();
+        let dims = schema_emb.dims();
 
         // Handle both 1D and 2D inputs
-        let (input, needs_squeeze) = if size.len() == 1 {
-            (schema_emb.unsqueeze(0), true)
-        } else if size.len() == 2 {
-            (schema_emb.shallow_clone(), false)
+        let (input, is_1d) = if dims.is_empty() {
+            return Err(GlinerError::dimension_mismatch(
+                vec![1, 2],
+                vec![0],
+            ));
+        } else if dims.len() == 1 {
+            // 1D input: (hidden_size,) -> (1, hidden_size)
+            let reshaped = schema_emb.reshape((1, dims[0]))
+                .map_err(|e| GlinerError::model_loading(format!("Failed to reshape 1D input: {e}")))?;
+            (reshaped, true)
+        } else if dims.len() == 2 {
+            (schema_emb.clone(), false)
         } else {
             return Err(GlinerError::dimension_mismatch(
                 vec![1, 2],
-                size.iter().map(|d| *d as usize).collect(),
+                dims.to_vec(),
             ));
         };
 
-        let batch_size = input.size()[0] as usize;
-        let hidden_dim = input.size()[1] as usize;
+        let batch_size = input.dims()[0];
+        let hidden_dim = input.dims()[1];
 
         if hidden_dim != self.hidden_size {
             return Err(GlinerError::dimension_mismatch(
@@ -336,27 +386,36 @@ impl CountPredictionLayer {
             ));
         }
 
-        // Compute logits: input @ weight.T + bias
-        // input: (batch_size, hidden_size)
-        // weight: (max_count, hidden_size)
-        // output: (batch_size, max_count)
-        let logits = input.matmul(&self.weight.transpose_copy(0, 1)) + &self.bias;
+        // Compute logits: linear forward -> (batch_size, max_count)
+        let logits = self.linear.forward(&input)
+            .map_err(|e| GlinerError::model_loading(format!("Count prediction forward failed: {e}")))?;
 
         // Get predicted count (argmax)
         let count = if batch_size == 1 {
-            // Single sample: get argmax directly
-            let logits_1d = if needs_squeeze {
-                logits.squeeze_dim(0)
+            // Single sample: get argmax from (1, max_count) -> squeeze to (max_count,) -> argmax
+            let logits_1d = if is_1d {
+                logits.squeeze(0)
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze logits: {e}")))?
             } else {
-                logits.narrow(0, 0, 1).squeeze_dim(0)
+                logits.narrow(0, 0, 1)
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to narrow logits: {e}")))?
+                    .squeeze(0)
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze logits: {e}")))?
             };
-            let argmax = logits_1d.argmax(0, false);
-            argmax.int64_value(&[]) as usize
+            let argmax = logits_1d.argmax(0)
+                .map_err(|e| GlinerError::model_loading(format!("Failed to compute argmax: {e}")))?;
+            argmax.to_scalar::<u32>()
+                .map_err(|e| GlinerError::model_loading(format!("Failed to get argmax value: {e}")))? as usize
         } else {
             // Batch: get argmax for first sample
-            let logits_1d = logits.narrow(0, 0, 1).squeeze_dim(0);
-            let argmax = logits_1d.argmax(0, false);
-            argmax.int64_value(&[]) as usize
+            let logits_1d = logits.narrow(0, 0, 1)
+                .map_err(|e| GlinerError::model_loading(format!("Failed to narrow logits: {e}")))?
+                .squeeze(0)
+                .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze logits: {e}")))?;
+            let argmax = logits_1d.argmax(0)
+                .map_err(|e| GlinerError::model_loading(format!("Failed to compute argmax: {e}")))?;
+            argmax.to_scalar::<u32>()
+                .map_err(|e| GlinerError::model_loading(format!("Failed to get argmax value: {e}")))? as usize
         };
 
         // Get count embedding
@@ -375,19 +434,21 @@ impl CountPredictionLayer {
     ///
     /// A vector of `CountPredictionOutput`, one for each schema.
     pub fn predict_count_batch(&self, schema_embs: &Tensor) -> Result<Vec<CountPredictionOutput>> {
-        let size = schema_embs.size();
-        if size.len() != 2 {
+        let dims = schema_embs.dims();
+
+        if dims.len() != 2 {
             return Err(GlinerError::dimension_mismatch(
                 vec![2],
-                size.iter().map(|d| *d as usize).collect(),
+                dims.to_vec(),
             ));
         }
 
-        let num_schemas = size[0] as usize;
+        let num_schemas = dims[0];
         let mut outputs = Vec::with_capacity(num_schemas);
 
         for i in 0..num_schemas {
-            let schema_emb = schema_embs.narrow(0, i as i64, 1);
+            let schema_emb = schema_embs.narrow(0, i, 1)
+                .map_err(|e| GlinerError::model_loading(format!("Failed to narrow schema embedding: {e}")))?;
             let output = self.predict_count(&schema_emb)?;
             outputs.push(output);
         }
@@ -420,43 +481,24 @@ impl CountPredictionLayer {
         // Get count embedding for the predicted count
         let count_emb = self.count_embedding.forward(pred_count - 1)?;
 
-        // Project schema embeddings using count embedding
-        // In the Python implementation, this is typically:
-        // struct_proj = self.count_embed(embs[1:], pred_count)
-        // Which projects the schema embeddings (excluding the first one) using count embedding
-
         // Simple projection: multiply schema embeddings by count embedding
         // schema_embs: (num_schemas, hidden_size)
         // count_emb: (1, hidden_size)
         // Result: (num_schemas, hidden_size)
-        let projected = schema_embs * count_emb;
+        let projected = schema_embs.broadcast_mul(&count_emb)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to compute span projection: {e}")))?;
 
         Ok(projected)
     }
 
-    /// Get the weight tensor.
-    pub fn weight(&self) -> &Tensor {
-        &self.weight
-    }
-
-    /// Get the bias tensor.
-    pub fn bias(&self) -> &Tensor {
-        &self.bias
+    /// Get the device the layer is on.
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 
     /// Get the count embedding layer.
     pub fn count_embedding(&self) -> &CountEmbedding {
         &self.count_embedding
-    }
-
-    /// Set the weight tensor.
-    pub fn set_weight(&mut self, weight: Tensor) {
-        self.weight = weight;
-    }
-
-    /// Set the bias tensor.
-    pub fn set_bias(&mut self, bias: Tensor) {
-        self.bias = bias;
     }
 }
 
@@ -519,7 +561,6 @@ mod tests {
         let embedding = embedding.unwrap();
         assert_eq!(embedding.max_count, 20);
         assert_eq!(embedding.hidden_size, 768);
-        assert_eq!(embedding.embedding_table.size(), &[20, 768]);
     }
 
     #[test]
@@ -528,30 +569,28 @@ mod tests {
 
         let emb = embedding.forward(0);
         assert!(emb.is_ok());
-        assert_eq!(emb.unwrap().size(), &[1, 768]);
+        assert_eq!(emb.unwrap().dims().unwrap(), &[1, 768]);
 
         let emb = embedding.forward(19);
         assert!(emb.is_ok());
-        assert_eq!(emb.unwrap().size(), &[1, 768]);
+        assert_eq!(emb.unwrap().dims().unwrap(), &[1, 768]);
     }
 
     #[test]
     fn test_count_embedding_forward_batch() {
         let embedding = CountEmbedding::new(20, 768, Device::Cpu).unwrap();
-        let counts = vec![0, 5, 10, 19];
 
-        let embs = embedding.forward_batch(&counts);
+        let embs = embedding.forward_batch(&[0, 5, 10, 19]);
         assert!(embs.is_ok());
-        assert_eq!(embs.unwrap().size(), &[4, 768]);
+        assert_eq!(embs.unwrap().dims().unwrap(), &[4, 768]);
     }
 
     #[test]
-    fn test_count_embedding_invalid_count() {
+    fn test_count_embedding_invalid_index() {
         let embedding = CountEmbedding::new(20, 768, Device::Cpu).unwrap();
 
         assert!(embedding.forward(20).is_err());
         assert!(embedding.forward(100).is_err());
-        assert!(embedding.forward_batch(&[0, 20]).is_err());
     }
 
     #[test]
@@ -561,41 +600,38 @@ mod tests {
         let layer = layer.unwrap();
         assert_eq!(layer.hidden_size, 768);
         assert_eq!(layer.max_count, 20);
-        assert_eq!(layer.weight.size(), &[20, 768]);
-        assert_eq!(layer.bias.size(), &[20]);
     }
 
     #[test]
-    fn test_count_prediction_forward() {
+    fn test_count_prediction_predict() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(&[1, 768], (Kind::Float, Device::Cpu));
+        let schema_emb = Tensor::randn(0.0, 1.0, (1, 768), &Device::Cpu).unwrap();
 
         let output = layer.predict_count(&schema_emb);
         assert!(output.is_ok());
         let output = output.unwrap();
 
-        assert_eq!(output.logits.size(), &[1, 20]);
         assert!(output.count < 20);
-        assert_eq!(output.count_embedding.size(), &[1, 768]);
+        assert_eq!(output.logits.dims(), &[1, 20]);
+        assert_eq!(output.count_embedding.dims(), &[1, 768]);
     }
 
     #[test]
-    fn test_count_prediction_forward_1d() {
+    fn test_count_prediction_1d_input() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(&[768], (Kind::Float, Device::Cpu));
+        let schema_emb = Tensor::randn(0.0, 1.0, (768,), &Device::Cpu).unwrap();
 
         let output = layer.predict_count(&schema_emb);
         assert!(output.is_ok());
         let output = output.unwrap();
 
-        assert_eq!(output.logits.size(), &[1, 20]);
         assert!(output.count < 20);
     }
 
     #[test]
     fn test_count_prediction_batch() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[5, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (5, 768), &Device::Cpu).unwrap();
 
         let outputs = layer.predict_count_batch(&schema_embs);
         assert!(outputs.is_ok());
@@ -604,52 +640,33 @@ mod tests {
         assert_eq!(outputs.len(), 5);
         for output in &outputs {
             assert!(output.count < 20);
-            assert_eq!(output.count_embedding.size(), &[1, 768]);
         }
     }
 
     #[test]
-    fn test_count_prediction_invalid_input() {
+    fn test_count_prediction_invalid_hidden_size() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0, 1.0, (1, 512), &Device::Cpu).unwrap();
 
-        // Wrong hidden size
-        let bad_emb = Tensor::randn(&[1, 512], (Kind::Float, Device::Cpu));
-        assert!(layer.predict_count(&bad_emb).is_err());
-
-        // Wrong dimensions
-        let bad_emb = Tensor::randn(&[1, 2, 768], (Kind::Float, Device::Cpu));
-        assert!(layer.predict_count(&bad_emb).is_err());
+        assert!(layer.predict_count(&schema_emb).is_err());
     }
 
     #[test]
-    fn test_span_projection() {
+    fn test_count_prediction_compute_span_projection() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
 
         let projected = layer.compute_span_projection(&schema_embs, 5);
         assert!(projected.is_ok());
-        assert_eq!(projected.unwrap().size(), &[3, 768]);
+        assert_eq!(projected.unwrap().dims(), &[3, 768]);
     }
 
     #[test]
-    fn test_span_projection_zero_count() {
+    fn test_count_prediction_zero_count_projection() {
         let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
 
         assert!(layer.compute_span_projection(&schema_embs, 0).is_err());
-    }
-
-    #[test]
-    fn test_count_prediction_deterministic() {
-        let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-        let schema_emb = Tensor::randn(&[1, 768], (Kind::Float, Device::Cpu));
-
-        let output1 = layer.predict_count(&schema_emb).unwrap();
-        let output2 = layer.predict_count(&schema_emb).unwrap();
-
-        assert_eq!(output1.count, output2.count);
-        assert_eq!(output1.logits, output2.logits);
-        assert_eq!(output1.count_embedding, output2.count_embedding);
     }
 
     #[test]
@@ -667,25 +684,13 @@ mod tests {
     }
 
     #[test]
-    fn test_count_embedding_getters_setters() {
-        let mut embedding = CountEmbedding::new(20, 768, Device::Cpu).unwrap();
-        let new_table = Tensor::ones(&[20, 768], (Kind::Float, Device::Cpu));
+    fn test_count_prediction_deterministic() {
+        let layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
+        let schema_emb = Tensor::randn(0.0, 1.0, (1, 768), &Device::Cpu).unwrap();
 
-        embedding.set_embedding_table(new_table.shallow_clone());
-        assert_eq!(embedding.embedding_table(), &new_table);
-    }
+        let output1 = layer.predict_count(&schema_emb).unwrap();
+        let output2 = layer.predict_count(&schema_emb).unwrap();
 
-    #[test]
-    fn test_count_prediction_getters_setters() {
-        let mut layer = CountPredictionLayer::new(768, 20, Device::Cpu).unwrap();
-
-        let new_weight = Tensor::ones(&[20, 768], (Kind::Float, Device::Cpu));
-        let new_bias = Tensor::zeros(&[20], (Kind::Float, Device::Cpu));
-
-        layer.set_weight(new_weight.shallow_clone());
-        layer.set_bias(new_bias.shallow_clone());
-
-        assert_eq!(layer.weight(), &new_weight);
-        assert_eq!(layer.bias(), &new_bias);
+        assert_eq!(output1.count, output2.count);
     }
 }

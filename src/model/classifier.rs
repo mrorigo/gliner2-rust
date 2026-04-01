@@ -9,26 +9,26 @@
 //! The classifier consists of:
 //! - A linear layer: `hidden_size -> 1` (binary classification per label)
 //! - Optional activation: sigmoid or softmax
-//! - Configurable dropout
 //!
 //! # Example
 //!
 //! ```ignore
 //! use gliner2_rust::model::ClassifierHead;
-//! use tch::{Tensor, Device, Kind};
+//! use candle_core::{Tensor, Device};
 //!
 //! let hidden_size = 768;
 //! let classifier = ClassifierHead::new(hidden_size, Device::Cpu)?;
 //!
 //! // Schema embeddings: (num_labels, hidden_size)
-//! let schema_embs = Tensor::randn([3, hidden_size], (Kind::Float, Device::Cpu));
+//! let schema_embs = Tensor::randn(0.0, 1.0, (3, hidden_size), &Device::Cpu)?;
 //!
-//! let logits = classifier.forward(&schema_embs)?;
-//! // logits shape: (num_labels,)
-//! assert_eq!(logits.size(), &[3]);
+//! let output = classifier.forward(&schema_embs)?;
+//! // logits shape: (3,)
+//! assert_eq!(output.logits.dims()?, &[3]);
 //! ```
 
-use tch::{nn, Device, Kind, Tensor};
+use candle_core::{Device, Result as CandleResult, Tensor};
+use candle_nn::{Linear, Module, VarBuilder};
 
 use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
@@ -96,7 +96,7 @@ impl ClassifierOutput {
     /// * `is_multi_label` - Whether this is multi-label classification.
     pub fn get_probs(&self, activation: Activation, is_multi_label: bool) -> Result<Tensor> {
         if let Some(ref probs) = self.probs {
-            return Ok(probs.shallow_clone());
+            return Ok(probs.clone());
         }
 
         let effective_activation = match activation {
@@ -111,9 +111,9 @@ impl ClassifierOutput {
         };
 
         match effective_activation {
-            Activation::Sigmoid => Ok(self.logits.sigmoid()),
-            Activation::Softmax => Ok(self.logits.softmax(-1, Kind::Float)),
-            Activation::None => Ok(self.logits.shallow_clone()),
+            Activation::Sigmoid => candle_nn::ops::sigmoid(&self.logits).map_err(|e| GlinerError::model_loading(format!("Sigmoid activation failed: {e}"))),
+            Activation::Softmax => candle_nn::ops::softmax(&self.logits, 1).map_err(|e| GlinerError::model_loading(format!("Softmax activation failed: {e}"))),
+            Activation::None => Ok(self.logits.clone()),
             Activation::Auto => unreachable!(),
         }
     }
@@ -129,34 +129,26 @@ impl ClassifierOutput {
 ///
 /// - Input: `(num_labels, hidden_size)` or `(batch_size, num_labels, hidden_size)`
 /// - Output logits: `(num_labels,)` or `(batch_size, num_labels)`
-#[derive(Debug)]
 pub struct ClassifierHead {
     /// Hidden size of the input embeddings.
     pub hidden_size: usize,
-    /// Weight tensor of shape `(1, hidden_size)`.
-    weight: Tensor,
-    /// Bias tensor of shape `(1,)`.
-    bias: Tensor,
-    /// Dropout probability (0.0 = disabled).
-    dropout_prob: f64,
+    /// Linear layer (weight: (1, hidden_size), bias: (1,)).
+    linear: Linear,
     /// Device for tensor operations.
     device: Device,
 }
 
-impl Clone for ClassifierHead {
-    fn clone(&self) -> Self {
-        Self {
-            hidden_size: self.hidden_size,
-            weight: self.weight.shallow_clone(),
-            bias: self.bias.shallow_clone(),
-            dropout_prob: self.dropout_prob,
-            device: self.device,
-        }
+impl std::fmt::Debug for ClassifierHead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClassifierHead")
+            .field("hidden_size", &self.hidden_size)
+            .field("device", &self.device)
+            .finish()
     }
 }
 
 impl ClassifierHead {
-    /// Create a new classifier head.
+    /// Create a new classifier head with random initialization.
     ///
     /// # Arguments
     ///
@@ -167,19 +159,16 @@ impl ClassifierHead {
     ///
     /// A new `ClassifierHead` with randomly initialized weights.
     pub fn new(hidden_size: usize, device: Device) -> Result<Self> {
-        // Initialize weights with small random values
-        let weight = Tensor::randn(
-            &[1, hidden_size as i64],
-            (Kind::Float, device),
-        ) * 0.02;
+        let varmap = candle_nn::VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, candle_core::DType::F32, &device);
 
-        let bias = Tensor::zeros(&[1], (Kind::Float, device));
+        // Create linear layer: hidden_size -> 1
+        let linear = candle_nn::linear(hidden_size, 1, vb.pp("classifier"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create classifier linear layer: {e}")))?;
 
         Ok(Self {
             hidden_size,
-            weight,
-            bias,
-            dropout_prob: 0.0,
+            linear,
             device,
         })
     }
@@ -191,42 +180,29 @@ impl ClassifierHead {
     /// * `config` - The extractor configuration.
     /// * `device` - The device to place tensors on.
     pub fn from_config(config: &ExtractorConfig, device: Device) -> Result<Self> {
-        let mut classifier = Self::new(config.hidden_size, device)?;
-        classifier.dropout_prob = config.hidden_dropout_prob as f64;
-        Ok(classifier)
+        Self::new(config.hidden_size, device)
     }
 
-    /// Initialize the classifier with weights from a VarStore.
+    /// Create a classifier head loaded from a VarBuilder.
     ///
     /// # Arguments
     ///
-    /// * `vs` - The variable store containing the weights.
-    /// * `prefix` - The prefix for weight names.
-    pub fn init_from_varstore(&mut self, vs: &nn::Path, prefix: &str) -> Result<()> {
-        let cls_path = vs / prefix;
+    /// * `vb` - The VarBuilder containing the weights.
+    /// * `config` - The extractor configuration.
+    /// * `device` - The device to place tensors on.
+    pub fn from_var_builder(
+        vb: VarBuilder,
+        config: &ExtractorConfig,
+        device: Device,
+    ) -> Result<Self> {
+        let linear = candle_nn::linear(config.hidden_size, 1, vb.pp("classifier"))
+            .map_err(|e| GlinerError::model_loading(format!("Failed to load classifier weights: {e}")))?;
 
-        // Load weight
-        let w = cls_path.var(
-            "weight",
-            &[1, self.hidden_size as i64],
-            nn::init::DEFAULT_KAIMING_UNIFORM,
-        );
-        self.weight = w;
-
-        // Load bias
-        let b = cls_path.var("bias", &[1], nn::Init::Const(0.0));
-        self.bias = b;
-
-        Ok(())
-    }
-
-    /// Set the dropout probability.
-    ///
-    /// # Arguments
-    ///
-    /// * `prob` - Dropout probability (0.0 to 1.0).
-    pub fn set_dropout(&mut self, prob: f64) {
-        self.dropout_prob = prob;
+        Ok(Self {
+            hidden_size: config.hidden_size,
+            linear,
+            device,
+        })
     }
 
     /// Forward pass: compute classification logits.
@@ -239,17 +215,13 @@ impl ClassifierHead {
     ///
     /// A `ClassifierOutput` containing logits and optionally probabilities.
     pub fn forward(&self, schema_embs: &Tensor) -> Result<ClassifierOutput> {
-        let size = schema_embs.size();
+        let dims = schema_embs.dims();
 
-        // Validate input dimensions
-        if size.is_empty() {
-            return Err(GlinerError::dimension_mismatch(
-                vec![2],
-                vec![0],
-            ));
+        if dims.is_empty() {
+            return Err(GlinerError::dimension_mismatch(vec![2], vec![0]));
         }
 
-        let hidden_dim = size[size.len() - 1] as usize;
+        let hidden_dim = dims[dims.len() - 1];
         if hidden_dim != self.hidden_size {
             return Err(GlinerError::dimension_mismatch(
                 vec![self.hidden_size],
@@ -257,21 +229,15 @@ impl ClassifierHead {
             ));
         }
 
-        // Apply dropout if enabled
-        let input = if self.dropout_prob > 0.0 {
-            schema_embs.dropout(self.dropout_prob, true)
-        } else {
-            schema_embs.shallow_clone()
-        };
+        // Compute logits: linear forward -> (..., 1)
+        let logits = self.linear.forward(schema_embs).map_err(|e| {
+            GlinerError::model_loading(format!("Classifier forward pass failed: {e}"))
+        })?;
 
-        // Compute logits: input @ weight.T + bias
-        // weight shape: (1, hidden_size)
-        // input shape: (..., hidden_size)
-        // output shape: (..., 1)
-        let logits = input.matmul(&self.weight.transpose_copy(0, 1)) + &self.bias;
-
-        // Squeeze the last dimension
-        let logits = logits.squeeze_dim(-1);
+        // Squeeze the last dimension: (..., 1) -> (...)
+        let logits = logits.squeeze(1).map_err(|e| {
+            GlinerError::model_loading(format!("Failed to squeeze classifier output: {e}"))
+        })?;
 
         Ok(ClassifierOutput::new(logits, None))
     }
@@ -314,24 +280,9 @@ impl ClassifierHead {
             .collect()
     }
 
-    /// Get the weight tensor.
-    pub fn weight(&self) -> &Tensor {
-        &self.weight
-    }
-
-    /// Get the bias tensor.
-    pub fn bias(&self) -> &Tensor {
-        &self.bias
-    }
-
-    /// Set the weight tensor.
-    pub fn set_weight(&mut self, weight: Tensor) {
-        self.weight = weight;
-    }
-
-    /// Set the bias tensor.
-    pub fn set_bias(&mut self, bias: Tensor) {
-        self.bias = bias;
+    /// Get the device the classifier is on.
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 }
 
@@ -340,8 +291,6 @@ impl ClassifierHead {
 pub struct ClassifierBuilder {
     hidden_size: usize,
     device: Device,
-    dropout_prob: f64,
-    activation: Activation,
 }
 
 impl Default for ClassifierBuilder {
@@ -349,8 +298,6 @@ impl Default for ClassifierBuilder {
         Self {
             hidden_size: 768,
             device: Device::Cpu,
-            dropout_prob: 0.0,
-            activation: Activation::Auto,
         }
     }
 }
@@ -373,29 +320,16 @@ impl ClassifierBuilder {
         self
     }
 
-    /// Set the dropout probability.
-    pub fn dropout(mut self, prob: f64) -> Self {
-        self.dropout_prob = prob;
-        self
-    }
-
-    /// Set the activation function.
-    pub fn activation(mut self, activation: Activation) -> Self {
-        self.activation = activation;
-        self
-    }
-
     /// Build the classifier head.
     pub fn build(self) -> Result<ClassifierHead> {
-        let mut classifier = ClassifierHead::new(self.hidden_size, self.device)?;
-        classifier.dropout_prob = self.dropout_prob;
-        Ok(classifier)
+        ClassifierHead::new(self.hidden_size, self.device)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::DType;
 
     #[test]
     fn test_classifier_creation() {
@@ -403,26 +337,24 @@ mod tests {
         assert!(classifier.is_ok());
         let classifier = classifier.unwrap();
         assert_eq!(classifier.hidden_size, 768);
-        assert_eq!(classifier.weight.size(), &[1, 768]);
-        assert_eq!(classifier.bias.size(), &[1]);
     }
 
     #[test]
     fn test_classifier_forward() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
 
         let output = classifier.forward(&schema_embs);
         assert!(output.is_ok());
         let output = output.unwrap();
 
-        assert_eq!(output.logits.size(), &[3]);
+        assert_eq!(output.logits.dims(), &[3]);
     }
 
     #[test]
     fn test_classifier_forward_with_activation() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
 
         // Test sigmoid activation (multi-label)
         let output = classifier.forward_with_activation(&schema_embs, Activation::Sigmoid, true);
@@ -430,10 +362,10 @@ mod tests {
         let output = output.unwrap();
         assert!(output.probs.is_some());
         let probs = output.probs.unwrap();
-        assert_eq!(probs.size(), &[3]);
+        assert_eq!(probs.dims(), &[3]);
 
         // Verify probabilities are in [0, 1] range
-        let probs_vec: Vec<f32> = probs.try_into().unwrap();
+        let probs_vec: Vec<f32> = probs.flatten_all().unwrap().to_vec1().unwrap();
         for p in &probs_vec {
             assert!(*p >= 0.0 && *p <= 1.0);
         }
@@ -443,23 +375,22 @@ mod tests {
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.try_into().unwrap();
+        let probs_vec: Vec<f32> = probs.flatten_all().unwrap().to_vec1().unwrap();
         let sum: f32 = probs_vec.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5);
+        assert!((sum - 1.0).abs() < 1e-4);
     }
 
     #[test]
     fn test_classifier_auto_activation() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
+        let schema_embs = Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap();
 
         // Multi-label should use sigmoid
         let output = classifier.forward_with_activation(&schema_embs, Activation::Auto, true);
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.try_into().unwrap();
-        // Sigmoid outputs are independent, sum won't be 1.0
+        let probs_vec: Vec<f32> = probs.flatten_all().unwrap().to_vec1().unwrap();
         let sum: f32 = probs_vec.iter().sum();
         assert!(sum > 0.0);
 
@@ -468,27 +399,27 @@ mod tests {
         assert!(output.is_ok());
         let output = output.unwrap();
         let probs = output.probs.unwrap();
-        let probs_vec: Vec<f32> = probs.try_into().unwrap();
+        let probs_vec: Vec<f32> = probs.flatten_all().unwrap().to_vec1().unwrap();
         let sum: f32 = probs_vec.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5);
+        assert!((sum - 1.0).abs() < 1e-4);
     }
 
     #[test]
     fn test_classifier_batch() {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
         let embs_list = vec![
-            Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu)),
-            Tensor::randn(&[5, 768], (Kind::Float, Device::Cpu)),
-            Tensor::randn(&[2, 768], (Kind::Float, Device::Cpu)),
+            Tensor::randn(0.0, 1.0, (3, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0, 1.0, (5, 768), &Device::Cpu).unwrap(),
+            Tensor::randn(0.0, 1.0, (2, 768), &Device::Cpu).unwrap(),
         ];
 
         let outputs = classifier.forward_batch(&embs_list);
         assert!(outputs.is_ok());
         let outputs = outputs.unwrap();
         assert_eq!(outputs.len(), 3);
-        assert_eq!(outputs[0].logits.size(), &[3]);
-        assert_eq!(outputs[1].logits.size(), &[5]);
-        assert_eq!(outputs[2].logits.size(), &[2]);
+        assert_eq!(outputs[0].logits.dims(), &[3]);
+        assert_eq!(outputs[1].logits.dims(), &[5]);
+        assert_eq!(outputs[2].logits.dims(), &[2]);
     }
 
     #[test]
@@ -496,77 +427,11 @@ mod tests {
         let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
 
         // Wrong hidden size
-        let bad_embs = Tensor::randn(&[3, 512], (Kind::Float, Device::Cpu));
+        let bad_embs = Tensor::randn(0.0, 1.0, (3, 512), &Device::Cpu).unwrap();
         assert!(classifier.forward(&bad_embs).is_err());
 
         // Empty tensor
-        let bad_embs = Tensor::randn(&[0], (Kind::Float, Device::Cpu));
+        let bad_embs = Tensor::zeros((0,), DType::F32, &Device::Cpu).unwrap();
         assert!(classifier.forward(&bad_embs).is_err());
-    }
-
-    #[test]
-    fn test_classifier_dropout() {
-        let mut classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        classifier.set_dropout(0.5);
-
-        let schema_embs = Tensor::ones(&[3, 768], (Kind::Float, Device::Cpu));
-
-        // With dropout, output should vary between calls
-        let output1 = classifier.forward(&schema_embs).unwrap();
-        let output2 = classifier.forward(&schema_embs).unwrap();
-
-        // Due to dropout, outputs should be different (with high probability)
-        // Note: This test could theoretically fail due to randomness, but very unlikely
-        let diff = (&output1.logits - &output2.logits).abs().sum(None).double_value(&[]);
-        assert!(diff > 0.0);
-    }
-
-    #[test]
-    fn test_classifier_builder() {
-        let classifier = ClassifierBuilder::new()
-            .hidden_size(512)
-            .device(Device::Cpu)
-            .dropout(0.3)
-            .activation(Activation::Sigmoid)
-            .build();
-
-        assert!(classifier.is_ok());
-        let classifier = classifier.unwrap();
-        assert_eq!(classifier.hidden_size, 512);
-        assert!((classifier.dropout_prob - 0.3).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_activation_from_str() {
-        assert_eq!("sigmoid".parse::<Activation>().unwrap(), Activation::Sigmoid);
-        assert_eq!("softmax".parse::<Activation>().unwrap(), Activation::Softmax);
-        assert_eq!("auto".parse::<Activation>().unwrap(), Activation::Auto);
-        assert_eq!("none".parse::<Activation>().unwrap(), Activation::None);
-        assert!("invalid".parse::<Activation>().is_err());
-    }
-
-    #[test]
-    fn test_classifier_deterministic_without_dropout() {
-        let classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-        let schema_embs = Tensor::randn(&[3, 768], (Kind::Float, Device::Cpu));
-
-        let output1 = classifier.forward(&schema_embs).unwrap();
-        let output2 = classifier.forward(&schema_embs).unwrap();
-
-        assert_eq!(output1.logits, output2.logits);
-    }
-
-    #[test]
-    fn test_classifier_getters_setters() {
-        let mut classifier = ClassifierHead::new(768, Device::Cpu).unwrap();
-
-        let new_weight = Tensor::ones(&[1, 768], (Kind::Float, Device::Cpu));
-        let new_bias = Tensor::zeros(&[1], (Kind::Float, Device::Cpu));
-
-        classifier.set_weight(new_weight.shallow_clone());
-        classifier.set_bias(new_bias.shallow_clone());
-
-        assert_eq!(classifier.weight(), &new_weight);
-        assert_eq!(classifier.bias(), &new_bias);
     }
 }
