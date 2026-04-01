@@ -974,6 +974,19 @@ impl GLiNER2 {
     pub fn compile(&mut self) -> Result<()> {
         self.model.compile()
     }
+
+    /// Load model weights from a safetensors file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the safetensors file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if weights were loaded successfully.
+    pub fn load_weights(&mut self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        self.model.load_weights(path)
+    }
 }
 
 #[cfg(test)]

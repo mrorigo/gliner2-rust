@@ -62,11 +62,14 @@ fn test_real_gliner2_inference() {
         .expect("Failed to build config");
     
     // Load the model with the correct config
-    // Note: This creates the model with random weights since we don't have
-    // a load_weights method on GLiNER2. The pipeline still works end-to-end.
-    println!("Loading GLiNER2 model...");
-    let model = GLiNER2::new(&config)
+    println!("Creating GLiNER2 engine...");
+    let mut model = GLiNER2::new(&config)
         .expect("Failed to create GLiNER2 engine");
+    
+    // Load the actual model weights
+    println!("Loading model weights from: {:?}", model_path);
+    model.load_weights(&model_path)
+        .expect("Failed to load model weights");
     
     // Create a schema for entity extraction
     let schema = SchemaBuilder::new()
