@@ -22,6 +22,7 @@
 //! model.load_weights("path/to/weights.safetensors")?;
 //! ```
 
+pub mod candle_encoder;
 pub mod classifier;
 pub mod count_pred;
 pub mod extractor;
@@ -29,6 +30,7 @@ pub mod loading;
 pub mod span_rep;
 
 // Re-export main types
+pub use candle_encoder::{CandleEncoder, EncoderType};
 pub use classifier::ClassifierHead;
 pub use count_pred::CountPredictionLayer;
 pub use extractor::{Extractor, ExtractorOutput};
