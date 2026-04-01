@@ -201,10 +201,10 @@ impl GLiNER2 {
 
     /// Load a HuggingFace tokenizer from config.
     ///
-    /// Tries to load from `config.tokenizer_path` first, then falls back
-    /// to loading from the model name (e.g., "bert-base-uncased").
+    /// Tries to load from `config.tokenizer_path` first, then from local model directory,
+    /// then downloads from HuggingFace Hub using the model name.
     ///
-    /// Returns `None` if no tokenizer can be loaded (falls back to whitespace tokenizer).
+    /// Returns `None` only if all loading methods fail (falls back to whitespace tokenizer).
     fn load_hf_tokenizer(config: &ExtractorConfig) -> Option<HfTokenizer> {
         // Try loading from explicit tokenizer path first
         if let Some(ref path) = config.tokenizer_path {
@@ -214,7 +214,7 @@ impl GLiNER2 {
             }
         }
 
-        // Try loading from model name (assumes local directory or HuggingFace model name)
+        // Try loading from model name as local directory
         let model_name = &config.model_name;
         let model_path = std::path::Path::new(model_name);
         if model_path.exists() && model_path.is_dir() {
@@ -225,10 +225,7 @@ impl GLiNER2 {
         }
 
         // Try common tokenizer file patterns in current directory
-        let tokenizer_files = [
-            "tokenizer.json",
-            "tokenizer_config.json",
-        ];
+        let tokenizer_files = ["tokenizer.json", "tokenizer_config.json"];
         for file in &tokenizer_files {
             let path = std::path::Path::new(file);
             if path.exists() {
@@ -239,17 +236,15 @@ impl GLiNER2 {
             }
         }
 
-        tracing::warn!(
-            "No HuggingFace tokenizer found. Falling back to whitespace tokenizer. \
-             Set tokenizer_path in config or place tokenizer.json in the model directory."
-        );
-        None
+        // Download from HuggingFace Hub
+        tracing::info!("Downloading tokenizer for '{}' from HuggingFace Hub...", model_name);
+        Self::download_hf_tokenizer(model_name)
     }
 
     /// Load a HuggingFace tokenizer from a directory path.
     ///
     /// Looks for `tokenizer.json` first (fast), then falls back to
-    /// loading from `tokenizer_config.json` + `vocab.txt` or similar.
+    /// loading from the path directly if it's a JSON file.
     fn load_hf_tokenizer_from_path(path: impl AsRef<std::path::Path>) -> Option<HfTokenizer> {
         let path = path.as_ref();
 
@@ -269,6 +264,44 @@ impl GLiNER2 {
         }
 
         None
+    }
+
+    /// Download a HuggingFace tokenizer from the Hub.
+    ///
+    /// Downloads `tokenizer.json` for the given model ID and loads it.
+    /// The file is cached locally by `hf-hub` for future use.
+    fn download_hf_tokenizer(model_id: &str) -> Option<HfTokenizer> {
+        use hf_hub::{api::sync::ApiBuilder, Repo, RepoType};
+
+        let repo = Repo::with_revision(
+            model_id.to_string(),
+            RepoType::Model,
+            "main".to_string(),
+        );
+
+        let api = ApiBuilder::new()
+            .with_progress(true)
+            .build()
+            .ok()?;
+
+        let repo_api = api.repo(repo);
+
+        // Download tokenizer.json
+        match repo_api.get("tokenizer.json") {
+            Ok(tokenizer_path) => {
+                tracing::info!("Downloaded tokenizer.json to: {:?}", tokenizer_path);
+                HfTokenizer::from_file(&tokenizer_path).ok()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to download tokenizer for '{}': {}. \
+                     Falling back to whitespace tokenizer.",
+                    model_id,
+                    e
+                );
+                None
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
