@@ -60,23 +60,10 @@ impl EncoderType {
         }
     }
 
-    /// Detect encoder type from weight names in the safetensors file.
+    /// Detect encoder type from weight names in a safetensors file.
     ///
-    /// Checks for DeBERTa-specific weight patterns (e.g., `rel_embeddings`, `key_proj`).
-    pub fn from_weight_names(weight_names: &[String]) -> Self {
-        let has_deberta = weight_names.iter().any(|name| {
-            name.contains("rel_embeddings") || name.contains("key_proj") || name.contains("query_proj")
-        });
-        if has_deberta {
-            EncoderType::DebertaV2
-        } else {
-            EncoderType::Bert
-        }
-    }
-
-    /// Detect encoder type from a safetensors file path.
-    ///
-    /// Reads the safetensors header to get weight names and detects the encoder type.
+    /// Reads the safetensors header to get weight names and detects the encoder type
+    /// based on DeBERTa-specific patterns (e.g., `key_proj`, `query_proj`, `rel_embeddings`).
     pub fn from_safetensors_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
         use std::io::Read;
         let path = path.as_ref();
@@ -97,8 +84,16 @@ impl EncoderType {
         let header: std::collections::HashMap<String, serde_json::Value> = serde_json::from_slice(&header_bytes)
             .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to parse header: {e}"), path))?;
 
-        let weight_names: Vec<String> = header.keys().cloned().collect();
-        Ok(Self::from_weight_names(&weight_names))
+        // Check for DeBERTa-specific weight patterns
+        let has_deberta = header.keys().any(|name| {
+            name.contains("rel_embeddings") || name.contains("key_proj") || name.contains("query_proj")
+        });
+
+        if has_deberta {
+            Ok(EncoderType::DebertaV2)
+        } else {
+            Ok(EncoderType::Bert)
+        }
     }
 }
 
@@ -174,8 +169,16 @@ impl CandleEncoder {
         config: &ExtractorConfig,
         device: Device,
     ) -> Result<Self> {
-        // Detect encoder type from model name
-        let encoder_type = EncoderType::from_model_name(&config.model_name);
+        // Detect encoder type by checking for DeBERTa-specific weight names
+        // DeBERTa uses key_proj, query_proj, value_proj, rel_embeddings
+        // BERT uses key.weight, query.weight, value.weight
+        let encoder_type = if vb.contains_tensor("encoder.attention.self.key_proj.weight")
+            || vb.contains_tensor("encoder.encoder.rel_embeddings.weight")
+        {
+            EncoderType::DebertaV2
+        } else {
+            EncoderType::Bert
+        };
         let hidden_size = config.hidden_size;
 
         let model = Self::load_model(vb, config, encoder_type)?;
@@ -205,7 +208,8 @@ impl CandleEncoder {
         device: Device,
     ) -> Result<Self> {
         let path = path.as_ref();
-        let encoder_type = EncoderType::from_model_name(&config.model_name);
+        // Detect encoder type from actual weight names in the safetensors file
+        let encoder_type = EncoderType::from_safetensors_path(path)?;
         let hidden_size = config.hidden_size;
 
         // Load weights from safetensors
@@ -242,13 +246,8 @@ impl CandleEncoder {
         // So we add the "encoder" prefix to the VarBuilder to match the stored names.
         let vb = vb.pp("encoder");
 
-        // Detect encoder type from weight names in the file
-        // This is needed because GLiNER2 models can use BERT or DeBERTa encoders
-        let encoder_type = if let Ok(path) = std::env::var("GLINER2_WEIGHTS_PATH") {
-            EncoderType::from_safetensors_path(&path).unwrap_or(encoder_type)
-        } else {
-            encoder_type
-        };
+        tracing::info!("Loading {:?} encoder with vocab_size={}, hidden_size={}", 
+            encoder_type, config.vocab_size, config.hidden_size);
 
         match encoder_type {
             EncoderType::Bert => {
