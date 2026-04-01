@@ -14,7 +14,7 @@
 //! let schema = SchemaBuilder::new()
 //!     .entity("person").description("Names of people").done()
 //!     .entity("company").done()
-//!     .classification("sentiment", vec!["positive", "negative", "neutral"])
+//!     .classification("sentiment", vec!["positive".to_string(), "negative".to_string(), "neutral".to_string()])
 //!         .multi_label(false)
 //!         .threshold(0.5)
 //!         .done()
@@ -128,7 +128,7 @@ impl SchemaBuilder {
     /// use gliner2_rust::schema::builder::SchemaBuilder;
     ///
     /// let schema = SchemaBuilder::new()
-    ///     .entities(vec!["person", "company", "location"])
+    ///     .entities(vec!["person".to_string(), "company".to_string(), "location".to_string()])
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -199,7 +199,7 @@ impl SchemaBuilder {
     /// use gliner2_rust::schema::builder::SchemaBuilder;
     ///
     /// let schema = SchemaBuilder::new()
-    ///     .classification("sentiment", vec!["positive", "negative", "neutral"])
+    ///     .classification("sentiment", vec!["positive".to_string(), "negative".to_string(), "neutral".to_string()])
     ///         .multi_label(false)
     ///         .threshold(0.5)
     ///         .done()

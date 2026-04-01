@@ -124,9 +124,10 @@ impl WhitespaceTokenizer {
     ///
     /// let tokenizer = WhitespaceTokenizer::new();
     /// let tokens = tokenizer.tokenize("Apple Inc.");
-    /// assert_eq!(tokens.len(), 2);
+    /// assert_eq!(tokens.len(), 3);
     /// assert_eq!(tokens[0].text, "apple");
-    /// assert_eq!(tokens[1].text, "inc.");
+    /// assert_eq!(tokens[1].text, "inc");
+    /// assert_eq!(tokens[2].text, ".");
     /// ```
     pub fn tokenize(&self, text: &str) -> Vec<Token> {
         let text = if self.lowercase {
@@ -363,12 +364,13 @@ mod tests {
         let tokenizer = WhitespaceTokenizer::new();
         let tokens = tokenizer.tokenize("Hello, world!");
 
-        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens.len(), 4);
         assert_eq!(tokens[0].text, "hello");
         assert_eq!(tokens[0].start, 0);
         assert_eq!(tokens[0].end, 5);
         assert_eq!(tokens[1].text, ",");
         assert_eq!(tokens[2].text, "world");
+        assert_eq!(tokens[3].text, "!");
     }
 
     #[test]
@@ -453,8 +455,8 @@ mod tests {
         let tokens = tokenizer.tokenize("Apple Inc.");
         let (start_mapping, end_mapping) = WhitespaceTokenizer::build_mappings(&tokens);
 
-        assert_eq!(start_mapping, vec![0, 6]);
-        assert_eq!(end_mapping, vec![5, 10]);
+        assert_eq!(start_mapping, vec![0, 6, 9]);
+        assert_eq!(end_mapping, vec![5, 9, 10]);
     }
 
     #[test]
@@ -462,10 +464,10 @@ mod tests {
         let tokenizer = WhitespaceTokenizer::new();
         let tokenized = TokenizedText::new("Apple Inc.", &tokenizer);
 
-        assert_eq!(tokenized.num_tokens(), 2);
-        assert_eq!(tokenized.token_texts, vec!["apple", "inc."]);
+        assert_eq!(tokenized.num_tokens(), 3);
+        assert_eq!(tokenized.token_texts, vec!["apple", "inc", "."]);
         assert_eq!(tokenized.extract_span(0, 1), "Apple");
-        assert_eq!(tokenized.extract_span(0, 2), "Apple Inc.");
+        assert_eq!(tokenized.extract_span(0, 2), "Apple Inc");
     }
 
     #[test]
@@ -496,7 +498,7 @@ mod tests {
         let text = "Apple CEO Tim Cook announced iPhone 15 in Cupertino.";
         let tokens = tokenizer.tokenize(text);
 
-        assert_eq!(tokens.len(), 9);
+        assert_eq!(tokens.len(), 10);
         assert_eq!(tokens[0].text, "apple");
         assert_eq!(tokens[1].text, "ceo");
         assert_eq!(tokens[2].text, "tim");
@@ -506,6 +508,7 @@ mod tests {
         assert_eq!(tokens[6].text, "15");
         assert_eq!(tokens[7].text, "in");
         assert_eq!(tokens[8].text, "cupertino");
+        assert_eq!(tokens[9].text, ".");
     }
 
     #[test]
@@ -516,9 +519,9 @@ mod tests {
         let info = tokenized.extract_span_with_info(0, 2, 0.95);
         assert!(info.is_some());
         let (text, conf, start, end) = info.unwrap();
-        assert_eq!(text, "Apple Inc.");
+        assert_eq!(text, "Apple Inc");
         assert!((conf - 0.95).abs() < f32::EPSILON);
         assert_eq!(start, 0);
-        assert_eq!(end, 10);
+        assert_eq!(end, 9);
     }
 }

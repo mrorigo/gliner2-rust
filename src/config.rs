@@ -183,7 +183,7 @@ impl std::str::FromStr for HiddenActivation {
 /// let config = ExtractorConfig::builder()
 ///     .model_name("bert-base-uncased")
 ///     .max_width(12)
-///     .max_len(384)
+///     .max_len(Some(384))
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -493,18 +493,12 @@ impl ConfigBuilder {
     /// Enable FP16 precision.
     pub fn fp16(mut self, enabled: bool) -> Self {
         self.config.use_fp16 = enabled;
-        if enabled {
-            self.config.use_bf16 = false;
-        }
         self
     }
 
     /// Enable BF16 precision.
     pub fn bf16(mut self, enabled: bool) -> Self {
         self.config.use_bf16 = enabled;
-        if enabled {
-            self.config.use_fp16 = false;
-        }
         self
     }
 

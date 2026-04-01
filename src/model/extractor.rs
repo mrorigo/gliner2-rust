@@ -787,7 +787,7 @@ mod tests {
     fn test_extractor_builder() {
         let extractor = ExtractorBuilder::new()
             .model_name("test-model")
-            .hidden_size(512)
+            .hidden_size(768)
             .max_width(12)
             .device("cpu")
             .fp16(false)
@@ -797,7 +797,7 @@ mod tests {
         assert!(extractor.is_ok());
         let extractor = extractor.unwrap();
         assert_eq!(extractor.config.model_name, "test-model");
-        assert_eq!(extractor.hidden_size(), 512);
+        assert_eq!(extractor.hidden_size(), 768);
         assert_eq!(extractor.max_width(), 12);
     }
 

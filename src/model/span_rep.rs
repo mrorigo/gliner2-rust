@@ -203,10 +203,10 @@ impl SpanRepresentationLayer {
 
         for width in 0..self.max_width {
             // Get start tokens: token_embs[0:seq_len-width]
-            let end_idx = seq_len - width;
+            let end_idx = seq_len.saturating_sub(width);
             if end_idx == 0 {
-                // No valid spans for this width
-                let zeros = Tensor::zeros(&[0, self.hidden_size as i64], (Kind::Float, self.device));
+                // No valid spans for this width - pad to seq_len for stacking
+                let zeros = Tensor::zeros(&[seq_len as i64, self.hidden_size as i64], (Kind::Float, self.device));
                 span_reps.push(zeros);
                 continue;
             }
@@ -568,7 +568,7 @@ mod tests {
         // Width 4: position 0 valid
         // Width 5-7: no valid positions
 
-        let mask_data: Vec<i64> = mask.try_into().unwrap();
+        let mask_data: Vec<i64> = mask.flatten(0, -1).try_into().unwrap();
         let mut expected = vec![0i64; 5 * 8];
 
         for i in 0..5 {
