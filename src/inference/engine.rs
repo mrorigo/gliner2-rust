@@ -236,7 +236,7 @@ impl GLiNER2 {
             }
         }
 
-        // Download from HuggingFace Hub
+        // Download from HuggingFace Hub (default behavior)
         tracing::info!("Downloading tokenizer for '{}' from HuggingFace Hub...", model_name);
         Self::download_hf_tokenizer(model_name)
     }
