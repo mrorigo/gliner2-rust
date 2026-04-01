@@ -28,6 +28,7 @@ pub mod count_pred;
 pub mod extractor;
 pub mod loading;
 pub mod span_rep;
+pub mod weight_mapping;
 
 // Re-export main types
 pub use candle_encoder::{CandleEncoder, EncoderType};
@@ -36,3 +37,4 @@ pub use count_pred::CountPredictionLayer;
 pub use extractor::{Extractor, ExtractorOutput};
 pub use loading::ModelLoader;
 pub use span_rep::SpanRepresentationLayer;
+pub use weight_mapping::{build_weight_map, is_classifier_weight, is_count_pred_weight, is_encoder_weight, is_span_rep_weight};
