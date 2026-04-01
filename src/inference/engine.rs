@@ -30,6 +30,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use serde_json::Value as JsonValue;
 use candle_core::{Device, Tensor};
+use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::batch::{ExtractorCollator, PreprocessedBatch};
 use crate::config::ExtractorConfig;
@@ -96,12 +97,24 @@ impl GLiNER2 {
     /// A new `GLiNER2` engine.
     pub fn new(config: &ExtractorConfig) -> Result<Self> {
         let model = Extractor::new(config)?;
-        let tokenizer = WhitespaceTokenizer::new();
-        let collator = ExtractorCollator::with_max_len(
-            tokenizer.clone(),
-            false,
-            config.max_len,
-        );
+        let ws_tokenizer = WhitespaceTokenizer::new();
+
+        // Try to load HuggingFace tokenizer (default behavior)
+        let hf_tokenizer = Self::load_hf_tokenizer(config);
+        let collator = if let Some(hf_tok) = hf_tokenizer {
+            ExtractorCollator::with_hf_tokenizer(
+                ws_tokenizer.clone(),
+                hf_tok,
+                false,
+                config.max_len,
+            )
+        } else {
+            ExtractorCollator::with_max_len(
+                ws_tokenizer.clone(),
+                false,
+                config.max_len,
+            )
+        };
 
         let device = match config.device.as_str() {
             "cpu" => Device::Cpu,
@@ -111,7 +124,7 @@ impl GLiNER2 {
 
         Ok(Self {
             model,
-            tokenizer,
+            tokenizer: ws_tokenizer,
             collator,
             default_threshold: 0.5,
             device,
@@ -142,12 +155,30 @@ impl GLiNER2 {
             model.load_weights(path)?;
         }
 
-        let tokenizer = WhitespaceTokenizer::new();
-        let collator = ExtractorCollator::with_max_len(
-            tokenizer.clone(),
-            false,
-            config.max_len,
-        );
+        let ws_tokenizer = WhitespaceTokenizer::new();
+
+        // Try to load HuggingFace tokenizer from local path or model name
+        let hf_tokenizer = if path.exists() {
+            // Try loading from local directory first
+            Self::load_hf_tokenizer_from_path(path).or_else(|| Self::load_hf_tokenizer(&config))
+        } else {
+            Self::load_hf_tokenizer(&config)
+        };
+
+        let collator = if let Some(hf_tok) = hf_tokenizer {
+            ExtractorCollator::with_hf_tokenizer(
+                ws_tokenizer.clone(),
+                hf_tok,
+                false,
+                config.max_len,
+            )
+        } else {
+            ExtractorCollator::with_max_len(
+                ws_tokenizer.clone(),
+                false,
+                config.max_len,
+            )
+        };
 
         let device = match config.device.as_str() {
             "cpu" => Device::Cpu,
@@ -157,12 +188,92 @@ impl GLiNER2 {
 
         Ok(Self {
             model,
-            tokenizer,
+            tokenizer: ws_tokenizer,
             collator,
             default_threshold: 0.5,
             device,
         })
     }
+
+    // -------------------------------------------------------------------------
+    // Tokenizer Loading
+    // -------------------------------------------------------------------------
+
+    /// Load a HuggingFace tokenizer from config.
+    ///
+    /// Tries to load from `config.tokenizer_path` first, then falls back
+    /// to loading from the model name (e.g., "bert-base-uncased").
+    ///
+    /// Returns `None` if no tokenizer can be loaded (falls back to whitespace tokenizer).
+    fn load_hf_tokenizer(config: &ExtractorConfig) -> Option<HfTokenizer> {
+        // Try loading from explicit tokenizer path first
+        if let Some(ref path) = config.tokenizer_path {
+            if let Some(tokenizer) = Self::load_hf_tokenizer_from_path(path) {
+                tracing::info!("Loaded HuggingFace tokenizer from: {:?}", path);
+                return Some(tokenizer);
+            }
+        }
+
+        // Try loading from model name (assumes local directory or HuggingFace model name)
+        let model_name = &config.model_name;
+        let model_path = std::path::Path::new(model_name);
+        if model_path.exists() && model_path.is_dir() {
+            if let Some(tokenizer) = Self::load_hf_tokenizer_from_path(model_path) {
+                tracing::info!("Loaded HuggingFace tokenizer from model directory: {}", model_name);
+                return Some(tokenizer);
+            }
+        }
+
+        // Try common tokenizer file patterns in current directory
+        let tokenizer_files = [
+            "tokenizer.json",
+            "tokenizer_config.json",
+        ];
+        for file in &tokenizer_files {
+            let path = std::path::Path::new(file);
+            if path.exists() {
+                if let Ok(tokenizer) = HfTokenizer::from_file(path) {
+                    tracing::info!("Loaded HuggingFace tokenizer from: {}", file);
+                    return Some(tokenizer);
+                }
+            }
+        }
+
+        tracing::warn!(
+            "No HuggingFace tokenizer found. Falling back to whitespace tokenizer. \
+             Set tokenizer_path in config or place tokenizer.json in the model directory."
+        );
+        None
+    }
+
+    /// Load a HuggingFace tokenizer from a directory path.
+    ///
+    /// Looks for `tokenizer.json` first (fast), then falls back to
+    /// loading from `tokenizer_config.json` + `vocab.txt` or similar.
+    fn load_hf_tokenizer_from_path(path: impl AsRef<std::path::Path>) -> Option<HfTokenizer> {
+        let path = path.as_ref();
+
+        // Try loading tokenizer.json first (preferred, fast)
+        let tokenizer_json = path.join("tokenizer.json");
+        if tokenizer_json.exists() {
+            if let Ok(tokenizer) = HfTokenizer::from_file(&tokenizer_json) {
+                return Some(tokenizer);
+            }
+        }
+
+        // Try loading from the path directly if it's a tokenizer.json file
+        if path.extension().map_or(false, |ext| ext == "json") {
+            if let Ok(tokenizer) = HfTokenizer::from_file(path) {
+                return Some(tokenizer);
+            }
+        }
+
+        None
+    }
+
+    // -------------------------------------------------------------------------
+    // Schema & Extraction
+    // -------------------------------------------------------------------------
 
     /// Create a new schema builder.
     ///
