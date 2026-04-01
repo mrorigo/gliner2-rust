@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use serde_json::Value as JsonValue;
-use tch::Tensor;
+use candle_core::Tensor;
 
 use crate::error::{GlinerError, Result};
 
@@ -31,7 +31,7 @@ pub type TokenMapping = (String, usize, usize);
 ///
 /// ```ignore
 /// use gliner2_rust::batch::PreprocessedBatch;
-/// use tch::{Tensor, Device};
+/// use candle_core::{Tensor, Device};
 ///
 /// let batch = PreprocessedBatch::new(
 ///     input_ids,
@@ -157,12 +157,12 @@ impl PreprocessedBatch {
 
     /// Get the batch size.
     pub fn batch_size(&self) -> usize {
-        self.input_ids.size()[0] as usize
+        self.input_ids.dims()[0]
     }
 
     /// Get the sequence length.
     pub fn seq_len(&self) -> usize {
-        self.input_ids.size()[1] as usize
+        self.input_ids.dims()[1]
     }
 
     /// Check if the batch is empty.
@@ -183,12 +183,16 @@ impl PreprocessedBatch {
     /// # Returns
     ///
     /// A new `PreprocessedBatch` with tensors on the target device.
-    pub fn to(&self, device: tch::Device, dtype: Option<tch::Kind>) -> Result<Self> {
+    pub fn to(&self, device: candle_core::Device, dtype: Option<candle_core::DType>) -> Result<Self> {
         let cast_tensor = |tensor: &Tensor, is_int: bool| -> Result<Tensor> {
-            let mut t = tensor.to_device(device);
-            if let Some(kind) = dtype {
+            let mut t = tensor.to_device(&device).map_err(|e| {
+                GlinerError::model_loading(format!("Failed to move tensor to device: {e}"))
+            })?;
+            if let Some(dt) = dtype {
                 if !is_int {
-                    t = t.to_kind(kind);
+                    t = t.to_dtype(dt).map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to cast tensor dtype: {e}"))
+                    })?;
                 }
             }
             Ok(t)
@@ -229,10 +233,10 @@ impl PreprocessedBatch {
     /// A new `PreprocessedBatch` with pinned tensors.
     pub fn pin_memory(&self) -> Result<Self> {
         let pin_tensor = |tensor: &Tensor| -> Result<Tensor> {
-            // Note: tch doesn't have a direct pin_memory() method.
+            // Note: candle doesn't have a direct pin_memory() method.
             // In practice, this would use CUDA pinned memory allocation.
             // For now, we return the tensor as-is.
-            Ok(tensor.shallow_clone())
+            Ok(tensor.clone())
         };
 
         Ok(Self {
@@ -272,16 +276,16 @@ impl PreprocessedBatch {
         match key {
             "input_ids" => Ok(JsonValue::String(format!(
                 "Tensor(shape={:?})",
-                self.input_ids.size()
+                self.input_ids.dims()
             ))),
             "attention_mask" => Ok(JsonValue::String(format!(
                 "Tensor(shape={:?})",
-                self.attention_mask.size()
+                self.attention_mask.dims()
             ))),
             "text_word_indices" => Ok(self
                 .text_word_indices
                 .as_ref()
-                .map(|t| JsonValue::String(format!("Tensor(shape={:?})", t.size())))
+                .map(|t| JsonValue::String(format!("Tensor(shape={:?})", t.dims())))
                 .unwrap_or(JsonValue::Null)),
             "mapped_indices" => serde_json::to_value(&self.mapped_indices)
                 .map_err(|e| GlinerError::serialization(format!("Failed to serialize mapped_indices: {e}"))),
@@ -624,8 +628,8 @@ impl PreprocessedBatchBuilder {
             .ok_or_else(|| GlinerError::validation("attention_mask is required"))?;
 
         // Validate tensor shapes match
-        let batch_size = input_ids.size()[0] as usize;
-        let mask_batch_size = attention_mask.size()[0] as usize;
+        let batch_size = input_ids.dims()[0];
+        let mask_batch_size = attention_mask.dims()[0];
         if batch_size != mask_batch_size {
             return Err(GlinerError::dimension_mismatch(
                 vec![batch_size],
@@ -659,12 +663,8 @@ mod tests {
     use super::*;
 
     fn create_test_batch() -> PreprocessedBatch {
-        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4, 5, 6])
-            .view((2, 3))
-            .to_kind(tch::Kind::Int64);
-        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 1, 1, 0])
-            .view((2, 3))
-            .to_kind(tch::Kind::Int64);
+        let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4, 5, 6], (2, 3), &candle_core::Device::Cpu).unwrap();
+        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &candle_core::Device::Cpu).unwrap();
 
         PreprocessedBatch::new(
             input_ids,
@@ -769,12 +769,8 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let input_ids = Tensor::from_slice(&[1i64, 2, 3, 4])
-            .view((2, 2))
-            .to_kind(tch::Kind::Int64);
-        let attention_mask = Tensor::from_slice(&[1i64, 1, 1, 0])
-            .view((2, 2))
-            .to_kind(tch::Kind::Int64);
+        let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4], (2, 2), &candle_core::Device::Cpu).unwrap();
+        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 0], (2, 2), &candle_core::Device::Cpu).unwrap();
 
         let batch = PreprocessedBatchBuilder::new()
             .input_ids(input_ids)

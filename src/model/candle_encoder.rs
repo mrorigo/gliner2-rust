@@ -117,6 +117,35 @@ impl CandleEncoder {
         })
     }
 
+    /// Create a new encoder loaded from a VarBuilder.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - The VarBuilder containing the weights.
+    /// * `config` - The extractor configuration.
+    /// * `device` - The device to run the encoder on.
+    ///
+    /// # Returns
+    ///
+    /// A new `CandleEncoder` with weights loaded from the VarBuilder.
+    pub fn from_var_builder(
+        vb: VarBuilder,
+        config: &ExtractorConfig,
+        device: Device,
+    ) -> Result<Self> {
+        let encoder_type = EncoderType::from_model_name(&config.model_name);
+        let hidden_size = config.hidden_size;
+
+        let model = Self::load_model(vb, config, encoder_type)?;
+
+        Ok(Self {
+            model,
+            device,
+            hidden_size,
+            is_loaded: true,
+        })
+    }
+
     /// Create a new encoder loaded from a safetensors file.
     ///
     /// # Arguments

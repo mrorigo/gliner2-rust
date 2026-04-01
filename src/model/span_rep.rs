@@ -180,7 +180,7 @@ impl SpanRepresentationLayer {
             .map_err(|e| GlinerError::model_loading(format!("Failed to load width embedding: {e}")))?;
 
         // Load layer norm if present
-        let layer_norm = if span_path.contains("layer_norm.weight") {
+        let layer_norm = if span_path.contains_tensor("layer_norm.weight") {
             let ln = candle_nn::layer_norm(config.hidden_size, 1e-5, span_path.pp("layer_norm"))
                 .map_err(|e| GlinerError::model_loading(format!("Failed to load layer norm: {e}")))?;
             Some(ln)
@@ -189,7 +189,7 @@ impl SpanRepresentationLayer {
         };
 
         // Load span linear if present
-        let span_linear = if span_path.contains("span_linear.weight") {
+        let span_linear = if span_path.contains_tensor("span_linear.weight") {
             let linear = candle_nn::linear(config.hidden_size * 2, config.hidden_size, span_path.pp("span_linear"))
                 .map_err(|e| GlinerError::model_loading(format!("Failed to load span linear: {e}")))?;
             Some(linear)
@@ -392,7 +392,9 @@ impl SpanRepresentationLayer {
 
         // Compute scores: schema_embs @ span_flat.T
         // Result: (num_schemas, seq_len * max_width)
-        let scores = schema_embs.matmul(&span_flat.transpose(0, 1)?)
+        let span_flat_t = span_flat.transpose(0, 1)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to transpose span_flat: {e}")))?;
+        let scores = schema_embs.matmul(&span_flat_t)
             .map_err(|e| GlinerError::model_loading(format!("Failed to compute span scores: {e}")))?;
 
         // Reshape to (num_schemas, seq_len, max_width)
@@ -400,14 +402,16 @@ impl SpanRepresentationLayer {
             .map_err(|e| GlinerError::model_loading(format!("Failed to reshape scores: {e}")))?;
 
         // Apply mask (set invalid spans to very negative value)
-        let mask_expanded = span_mask.unsqueeze(0)?
+        let mask_unsqueezed = span_mask.unsqueeze(0)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to unsqueeze mask: {e}")))?;
+        let mask_expanded = mask_unsqueezed
             .broadcast_as((num_schemas, seq_len, max_width))
             .map_err(|e| GlinerError::model_loading(format!("Failed to expand mask: {e}")))?;
 
-        let neg_inf = Tensor::full(-1e9f32, (num_schemas, seq_len, max_width), DType::F32, &self.device)
+        let neg_inf = Tensor::full(-1e9f32, (num_schemas, seq_len, max_width), &self.device)
             .map_err(|e| GlinerError::model_loading(format!("Failed to create neg_inf: {e}")))?;
 
-        let masked_scores = scores.where_cond(&mask_expanded, &neg_inf)
+        let masked_scores = mask_expanded.where_cond(&scores, &neg_inf)
             .map_err(|e| GlinerError::model_loading(format!("Failed to apply mask: {e}")))?;
 
         Ok(masked_scores)

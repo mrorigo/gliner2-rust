@@ -24,7 +24,7 @@
 //! ```
 
 use serde_json::Value as JsonValue;
-use tch::Tensor;
+use candle_core::{Device, Tensor};
 
 use crate::batch::preprocessed::{PreprocessedBatch, TokenMapping};
 use crate::error::{GlinerError, Result};
@@ -188,13 +188,11 @@ impl ExtractorCollator {
         }
 
         // Create tensors
-        let input_ids_tensor = Tensor::from_slice(&padded_input_ids)
-            .view((samples.len() as i64, max_seq_len as i64))
-            .to_kind(tch::Kind::Int64);
+        let input_ids_tensor = Tensor::from_slice(&padded_input_ids, (samples.len(), max_seq_len), &Device::Cpu)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create input_ids tensor: {e}")))?;
 
-        let attention_mask_tensor = Tensor::from_slice(&attention_mask)
-            .view((samples.len() as i64, max_seq_len as i64))
-            .to_kind(tch::Kind::Int64);
+        let attention_mask_tensor = Tensor::from_slice(&attention_mask, (samples.len(), max_seq_len), &Device::Cpu)
+            .map_err(|e| GlinerError::model_loading(format!("Failed to create attention_mask tensor: {e}")))?;
 
         // Create text word indices tensor if all samples have the same max words
         let max_words = all_text_word_indices.iter().map(|idx| idx.len()).max().unwrap_or(0);
@@ -205,9 +203,8 @@ impl ExtractorCollator {
                 flat_indices.extend(std::iter::repeat(-1).take(max_words - indices.len()));
             }
             Some(
-                Tensor::from_slice(&flat_indices)
-                    .view((samples.len() as i64, max_words as i64))
-                    .to_kind(tch::Kind::Int64),
+                Tensor::from_slice(&flat_indices, (samples.len(), max_words), &Device::Cpu)
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to create text_word_indices tensor: {e}")))?,
             )
         } else {
             None

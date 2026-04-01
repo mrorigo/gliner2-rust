@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use serde_json::Value as JsonValue;
-use tch::{Device, Kind, Tensor};
+use candle_core::{Device, Tensor};
 
 use crate::batch::{ExtractorCollator, PreprocessedBatch};
 use crate::config::ExtractorConfig;
@@ -105,7 +105,7 @@ impl GLiNER2 {
 
         let device = match config.device.as_str() {
             "cpu" => Device::Cpu,
-            "cuda" => Device::Cuda(0),
+            "cuda" => Device::cuda_if_available(0).unwrap_or(Device::Cpu),
             _ => Device::Cpu,
         };
 
@@ -151,7 +151,7 @@ impl GLiNER2 {
 
         let device = match config.device.as_str() {
             "cpu" => Device::Cpu,
-            "cuda" => Device::Cuda(0),
+            "cuda" => Device::cuda_if_available(0).unwrap_or(Device::Cpu),
             _ => Device::Cpu,
         };
 
@@ -560,7 +560,7 @@ impl GLiNER2 {
         let batch = self.collator.collate(samples)?;
 
         // Move to device
-        let batch = batch.to(self.device, None)?;
+        let batch = batch.to(self.device.clone(), None)?;
 
         // Run forward pass
         let output = model.forward(&batch)?;
@@ -817,8 +817,8 @@ impl GLiNER2 {
     }
 
     /// Get the device.
-    pub fn device(&self) -> Device {
-        self.device
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 
     /// Quantize the model to FP16.
