@@ -1,0 +1,75 @@
+[package]
+name = "gliner2-rust"
+version = "0.1.0"
+edition = "2024"
+description = "Rust implementation of GLiNER2 for efficient CPU-based information extraction"
+license = "Apache-2.0"
+repository = "https://github.com/your-org/gliner2-rust"
+keywords = ["nlp", "ner", "information-extraction", "transformer", "gliner"]
+categories = ["science", "text-processing"]
+
+[dependencies]
+# Neural network inference
+tch = "0.17"
+
+# Tokenization
+tokenizers = { version = "0.20", features = ["onig"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "3.8"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Regex validators
+regex = "1.10"
+
+# FP16 support
+half = { version = "2.4", features = ["serde"] }
+
+# Model weight loading
+safetensors = "0.4"
+
+# HTTP client for model downloads
+ureq = { version = "2.9", features = ["json"] }
+
+# Parallel processing
+rayon = "1.10"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Progress bars (optional, for downloads)
+indicatif = { version = "0.17", optional = true }
+
+# Caching
+dirs = "5.0"
+sha2 = "0.10"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.10"
+pretty_assertions = "1.4"
+
+[features]
+default = ["download"]
+download = ["ureq", "indicatif"]
+cuda = []
+
+[[bench]]
+name = "inference"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

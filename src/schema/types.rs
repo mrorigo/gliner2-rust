@@ -1,0 +1,1003 @@
+//! Schema types for GLiNER2.
+//!
+//! This module defines all data structures used to represent extraction schemas,
+//! including entities, classifications, relations, and structured data fields.
+//! These types mirror the Python `Schema` class functionality.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use crate::error::{GlinerError, Result};
+
+/// Data type for schema fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldDtype {
+    /// Single string value.
+    Str,
+    /// List of string values.
+    List,
+}
+
+impl Default for FieldDtype {
+    fn default() -> Self {
+        FieldDtype::List
+    }
+}
+
+impl std::fmt::Display for FieldDtype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FieldDtype::Str => write!(f, "str"),
+            FieldDtype::List => write!(f, "list"),
+        }
+    }
+}
+
+impl std::str::FromStr for FieldDtype {
+    type Err = GlinerError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "str" => Ok(FieldDtype::Str),
+            "list" => Ok(FieldDtype::List),
+            _ => Err(GlinerError::validation(format!(
+                "Invalid dtype: {s}. Expected 'str' or 'list'"
+            ))),
+        }
+    }
+}
+
+/// Regex validator for post-processing extracted spans.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegexValidator {
+    /// The regex pattern.
+    pub pattern: String,
+    /// Match mode: "full" for fullmatch, "partial" for search.
+    #[serde(default = "default_match_mode")]
+    pub mode: MatchMode,
+    /// If true, exclude matches (invert the filter).
+    #[serde(default)]
+    pub exclude: bool,
+    /// Regex flags (case-insensitive by default).
+    #[serde(default = "default_flags")]
+    pub flags: u32,
+}
+
+fn default_match_mode() -> MatchMode {
+    MatchMode::Full
+}
+
+fn default_flags() -> u32 {
+    regex::RegexBuilder::new("").build().map_or(0, |_| {
+        // Case-insensitive flag
+        regex::Regex::new("(?i)").map_or(0, |_| 0)
+    })
+}
+
+/// Match mode for regex validators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchMode {
+    /// Full match (entire string must match).
+    Full,
+    /// Partial match (substring can match).
+    Partial,
+}
+
+impl Default for RegexValidator {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            mode: MatchMode::Full,
+            exclude: false,
+            flags: 0,
+        }
+    }
+}
+
+impl RegexValidator {
+    /// Create a new regex validator.
+    pub fn new(pattern: impl Into<String>) -> Result<Self> {
+        let pattern = pattern.into();
+        regex::Regex::new(&pattern).map_err(|e| {
+            GlinerError::regex_validator(format!("Invalid regex pattern: {pattern}"))
+        })?;
+        Ok(Self {
+            pattern,
+            ..Default::default()
+        })
+    }
+
+    /// Validate text against the pattern.
+    pub fn validate(&self, text: &str) -> Result<bool> {
+        let re = regex::Regex::new(&self.pattern).map_err(|e| {
+            GlinerError::regex_validator(format!("Invalid regex: {}", e))
+        })?;
+
+        let matched = match self.mode {
+            MatchMode::Full => re.is_match(text) && re.find(text).map_or(false, |m| m.start() == 0 && m.end() == text.len()),
+            MatchMode::Partial => re.is_match(text),
+        };
+
+        Ok(if self.exclude { !matched } else { matched })
+    }
+}
+
+/// Field definition for structured data extraction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldDef {
+    /// Field name.
+    pub name: String,
+    /// Data type (str or list).
+    #[serde(default)]
+    pub dtype: FieldDtype,
+    /// Predefined choices for classification-style fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub choices: Option<Vec<String>>,
+    /// Field description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Confidence threshold for this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+    /// Regex validators for post-processing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validators: Option<Vec<RegexValidator>>,
+}
+
+impl FieldDef {
+    /// Create a new field definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            dtype: FieldDtype::List,
+            choices: None,
+            description: None,
+            threshold: None,
+            validators: None,
+        }
+    }
+
+    /// Set the data type.
+    pub fn with_dtype(mut self, dtype: FieldDtype) -> Self {
+        self.dtype = dtype;
+        self
+    }
+
+    /// Set predefined choices.
+    pub fn with_choices(mut self, choices: Vec<String>) -> Self {
+        self.choices = Some(choices);
+        self
+    }
+
+    /// Set the description.
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the threshold.
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+
+    /// Set validators.
+    pub fn with_validators(mut self, validators: Vec<RegexValidator>) -> Self {
+        self.validators = Some(validators);
+        self
+    }
+}
+
+/// Structure definition for JSON structure extraction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureDef {
+    /// Structure name.
+    pub name: String,
+    /// Field definitions.
+    pub fields: Vec<FieldDef>,
+    /// Field descriptions.
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub descriptions: HashMap<String, String>,
+}
+
+impl StructureDef {
+    /// Create a new structure definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            fields: Vec::new(),
+            descriptions: HashMap::new(),
+        }
+    }
+
+    /// Add a field to the structure.
+    pub fn add_field(mut self, field: FieldDef) -> Self {
+        self.fields.push(field);
+        self
+    }
+}
+
+/// Entity definition with optional metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityDef {
+    /// Entity type name.
+    pub name: String,
+    /// Entity description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Data type (str or list).
+    #[serde(default)]
+    pub dtype: FieldDtype,
+    /// Confidence threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+}
+
+impl EntityDef {
+    /// Create a new entity definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            dtype: FieldDtype::List,
+            threshold: None,
+        }
+    }
+
+    /// Set the description.
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the dtype.
+    pub fn with_dtype(mut self, dtype: FieldDtype) -> Self {
+        self.dtype = dtype;
+        self
+    }
+
+    /// Set the threshold.
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+}
+
+/// Classification task definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationDef {
+    /// Task name.
+    pub task: String,
+    /// Possible labels.
+    pub labels: Vec<String>,
+    /// Whether multiple labels can be selected.
+    #[serde(default)]
+    pub multi_label: bool,
+    /// Classification threshold.
+    #[serde(default = "default_cls_threshold")]
+    pub cls_threshold: f32,
+    /// Label descriptions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_descriptions: Option<HashMap<String, String>>,
+    /// Prompt for the task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Few-shot examples.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub examples: Option<Vec<(String, String)>>,
+}
+
+fn default_cls_threshold() -> f32 {
+    0.5
+}
+
+impl ClassificationDef {
+    /// Create a new classification definition.
+    pub fn new(task: impl Into<String>, labels: Vec<String>) -> Self {
+        Self {
+            task: task.into(),
+            labels,
+            multi_label: false,
+            cls_threshold: 0.5,
+            label_descriptions: None,
+            prompt: None,
+            examples: None,
+        }
+    }
+
+    /// Set multi-label mode.
+    pub fn multi_label(mut self, enabled: bool) -> Self {
+        self.multi_label = enabled;
+        self
+    }
+
+    /// Set the threshold.
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.cls_threshold = threshold;
+        self
+    }
+
+    /// Set label descriptions.
+    pub fn with_label_descriptions(mut self, descs: HashMap<String, String>) -> Self {
+        self.label_descriptions = Some(descs);
+        self
+    }
+}
+
+/// Relation definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationDef {
+    /// Relation type name.
+    pub name: String,
+    /// Relation description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Confidence threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+    /// Field names (typically "head" and "tail").
+    #[serde(default = "default_relation_fields")]
+    pub fields: Vec<String>,
+}
+
+fn default_relation_fields() -> Vec<String> {
+    vec!["head".to_string(), "tail".to_string()]
+}
+
+impl RelationDef {
+    /// Create a new relation definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            threshold: None,
+            fields: default_relation_fields(),
+        }
+    }
+
+    /// Set the description.
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the threshold.
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+
+    /// Set custom fields.
+    pub fn with_fields(mut self, fields: Vec<String>) -> Self {
+        self.fields = fields;
+        self
+    }
+}
+
+/// Task type for schema items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    /// Entity extraction.
+    Entities,
+    /// Classification.
+    Classifications,
+    /// JSON structure extraction.
+    JsonStructures,
+    /// Relation extraction.
+    Relations,
+}
+
+impl std::fmt::Display for TaskType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskType::Entities => write!(f, "entities"),
+            TaskType::Classifications => write!(f, "classifications"),
+            TaskType::JsonStructures => write!(f, "json_structures"),
+            TaskType::Relations => write!(f, "relations"),
+        }
+    }
+}
+
+impl std::str::FromStr for TaskType {
+    type Err = GlinerError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "entities" => Ok(TaskType::Entities),
+            "classifications" => Ok(TaskType::Classifications),
+            "json_structures" => Ok(TaskType::JsonStructures),
+            "relations" => Ok(TaskType::Relations),
+            _ => Err(GlinerError::validation(format!(
+                "Invalid task type: {s}"
+            ))),
+        }
+    }
+}
+
+/// Complete schema for information extraction.
+///
+/// This struct represents a full extraction schema that can include
+/// entities, classifications, structures, and relations.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Schema {
+    /// Entity definitions.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub entities: Vec<EntityDef>,
+    /// Classification task definitions.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub classifications: Vec<ClassificationDef>,
+    /// Structure definitions.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub structures: Vec<StructureDef>,
+    /// Relation definitions.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub relations: Vec<RelationDef>,
+    /// Entity descriptions (legacy format).
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub entity_descriptions: HashMap<String, String>,
+    /// Structure descriptions (legacy format).
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub json_descriptions: HashMap<String, HashMap<String, String>>,
+}
+
+impl Schema {
+    /// Create a new empty schema.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add entities to the schema.
+    pub fn entities(mut self, entities: Vec<EntityDef>) -> Self {
+        self.entities = entities;
+        self
+    }
+
+    /// Add classifications to the schema.
+    pub fn classifications(mut self, classifications: Vec<ClassificationDef>) -> Self {
+        self.classifications = classifications;
+        self
+    }
+
+    /// Add structures to the schema.
+    pub fn structures(mut self, structures: Vec<StructureDef>) -> Self {
+        self.structures = structures;
+        self
+    }
+
+    /// Add relations to the schema.
+    pub fn relations(mut self, relations: Vec<RelationDef>) -> Self {
+        self.relations = relations;
+        self
+    }
+
+    /// Check if the schema is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entities.is_empty()
+            && self.classifications.is_empty()
+            && self.structures.is_empty()
+            && self.relations.is_empty()
+    }
+
+    /// Get all task types in the schema.
+    pub fn task_types(&self) -> Vec<TaskType> {
+        let mut types = Vec::new();
+        if !self.entities.is_empty() {
+            types.push(TaskType::Entities);
+        }
+        if !self.classifications.is_empty() {
+            types.push(TaskType::Classifications);
+        }
+        if !self.structures.is_empty() {
+            types.push(TaskType::JsonStructures);
+        }
+        if !self.relations.is_empty() {
+            types.push(TaskType::Relations);
+        }
+        types
+    }
+
+    /// Validate the schema.
+    pub fn validate(&self) -> Result<()> {
+        if self.is_empty() {
+            return Err(GlinerError::invalid_schema(
+                "Schema must have at least one task type",
+            ));
+        }
+
+        // Validate entities
+        for entity in &self.entities {
+            if entity.name.is_empty() {
+                return Err(GlinerError::invalid_schema(
+                    "Entity name cannot be empty",
+                ));
+            }
+            if let Some(threshold) = entity.threshold {
+                if !(0.0..=1.0).contains(&threshold) {
+                    return Err(GlinerError::invalid_schema(format!(
+                        "Entity threshold must be 0-1, got {threshold}"
+                    )));
+                }
+            }
+        }
+
+        // Validate classifications
+        for cls in &self.classifications {
+            if cls.task.is_empty() {
+                return Err(GlinerError::invalid_schema(
+                    "Classification task name cannot be empty",
+                ));
+            }
+            if cls.labels.is_empty() {
+                return Err(GlinerError::invalid_schema(format!(
+                    "Classification '{}' has no labels",
+                    cls.task
+                )));
+            }
+            if !(0.0..=1.0).contains(&cls.cls_threshold) {
+                return Err(GlinerError::invalid_schema(format!(
+                    "Classification threshold must be 0-1, got {}",
+                    cls.cls_threshold
+                )));
+            }
+        }
+
+        // Validate structures
+        for structure in &self.structures {
+            if structure.name.is_empty() {
+                return Err(GlinerError::invalid_schema(
+                    "Structure name cannot be empty",
+                ));
+            }
+            if structure.fields.is_empty() {
+                return Err(GlinerError::invalid_schema(format!(
+                    "Structure '{}' has no fields",
+                    structure.name
+                )));
+            }
+            for field in &structure.fields {
+                if field.name.is_empty() {
+                    return Err(GlinerError::invalid_schema(
+                        "Field name cannot be empty",
+                    ));
+                }
+                if let Some(threshold) = field.threshold {
+                    if !(0.0..=1.0).contains(&threshold) {
+                        return Err(GlinerError::invalid_schema(format!(
+                            "Field threshold must be 0-1, got {threshold}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Validate relations
+        for relation in &self.relations {
+            if relation.name.is_empty() {
+                return Err(GlinerError::invalid_schema(
+                    "Relation name cannot be empty",
+                ));
+            }
+            if let Some(threshold) = relation.threshold {
+                if !(0.0..=1.0).contains(&threshold) {
+                    return Err(GlinerError::invalid_schema(format!(
+                        "Relation threshold must be 0-1, got {threshold}"
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert to dictionary format compatible with Python GLiNER2.
+    pub fn to_dict(&self) -> serde_json::Value {
+        let mut dict = serde_json::Map::new();
+
+        // Entities
+        if !self.entities.is_empty() {
+            let entities: serde_json::Map<String, serde_json::Value> = self
+                .entities
+                .iter()
+                .map(|e| {
+                    (
+                        e.name.clone(),
+                        e.description
+                            .clone()
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::String("".to_string())),
+                    )
+                })
+                .collect();
+            dict.insert("entities".to_string(), serde_json::Value::Object(entities));
+
+            if !self.entity_descriptions.is_empty() {
+                let descs: serde_json::Map<String, serde_json::Value> = self
+                    .entity_descriptions
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect();
+                dict.insert(
+                    "entity_descriptions".to_string(),
+                    serde_json::Value::Object(descs),
+                );
+            }
+        }
+
+        // Classifications
+        if !self.classifications.is_empty() {
+            let classifications: Vec<serde_json::Value> = self
+                .classifications
+                .iter()
+                .map(|cls| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("task".to_string(), serde_json::Value::String(cls.task.clone()));
+                    obj.insert(
+                        "labels".to_string(),
+                        serde_json::Value::Array(
+                            cls.labels
+                                .iter()
+                                .map(|l| serde_json::Value::String(l.clone()))
+                                .collect(),
+                        ),
+                    );
+                    if cls.multi_label {
+                        obj.insert(
+                            "multi_label".to_string(),
+                            serde_json::Value::Bool(true),
+                        );
+                    }
+                    obj.insert(
+                        "cls_threshold".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from_f64(cls.cls_threshold as f64).unwrap()),
+                    );
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
+            dict.insert(
+                "classifications".to_string(),
+                serde_json::Value::Array(classifications),
+            );
+        }
+
+        // Structures
+        if !self.structures.is_empty() {
+            let structures: Vec<serde_json::Value> = self
+                .structures
+                .iter()
+                .map(|s| {
+                    let mut obj = serde_json::Map::new();
+                    let mut fields = serde_json::Map::new();
+                    for field in &s.fields {
+                        if let Some(choices) = &field.choices {
+                            let mut field_obj = serde_json::Map::new();
+                            field_obj.insert(
+                                "value".to_string(),
+                                serde_json::Value::String("".to_string()),
+                            );
+                            field_obj.insert(
+                                "choices".to_string(),
+                                serde_json::Value::Array(
+                                    choices
+                                        .iter()
+                                        .map(|c| serde_json::Value::String(c.clone()))
+                                        .collect(),
+                                ),
+                            );
+                            fields.insert(
+                                field.name.clone(),
+                                serde_json::Value::Object(field_obj),
+                            );
+                        } else {
+                            fields.insert(
+                                field.name.clone(),
+                                serde_json::Value::String("".to_string()),
+                            );
+                        }
+                    }
+                    obj.insert(s.name.clone(), serde_json::Value::Object(fields));
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
+            dict.insert(
+                "json_structures".to_string(),
+                serde_json::Value::Array(structures),
+            );
+
+            if !self.json_descriptions.is_empty() {
+                let descs: serde_json::Map<String, serde_json::Value> = self
+                    .json_descriptions
+                    .iter()
+                    .map(|(k, v)| {
+                        let inner: serde_json::Map<String, serde_json::Value> = v
+                            .iter()
+                            .map(|(fk, fv)| (fk.clone(), serde_json::Value::String(fv.clone())))
+                            .collect();
+                        (k.clone(), serde_json::Value::Object(inner))
+                    })
+                    .collect();
+                dict.insert(
+                    "json_descriptions".to_string(),
+                    serde_json::Value::Object(descs),
+                );
+            }
+        }
+
+        // Relations
+        if !self.relations.is_empty() {
+            let relations: Vec<serde_json::Value> = self
+                .relations
+                .iter()
+                .map(|r| {
+                    let mut obj = serde_json::Map::new();
+                    let mut fields = serde_json::Map::new();
+                    fields.insert(
+                        "head".to_string(),
+                        serde_json::Value::String("".to_string()),
+                    );
+                    fields.insert(
+                        "tail".to_string(),
+                        serde_json::Value::String("".to_string()),
+                    );
+                    obj.insert(r.name.clone(), serde_json::Value::Object(fields));
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
+            dict.insert(
+                "relations".to_string(),
+                serde_json::Value::Array(relations),
+            );
+        }
+
+        serde_json::Value::Object(dict)
+    }
+
+    /// Create a schema from a dictionary (Python-compatible format).
+    pub fn from_dict(dict: &serde_json::Value) -> Result<Self> {
+        let mut schema = Self::new();
+
+        if let Some(obj) = dict.as_object() {
+            // Parse entities
+            if let Some(entities) = obj.get("entities") {
+                if let Some(entities_obj) = entities.as_object() {
+                    for (name, value) in entities_obj {
+                        let mut entity = EntityDef::new(name);
+                        if let Some(desc) = value.as_str() {
+                            if !desc.is_empty() {
+                                entity = entity.with_description(desc);
+                            }
+                        }
+                        schema.entities.push(entity);
+                    }
+                } else if let Some(entities_arr) = entities.as_array() {
+                    for value in entities_arr {
+                        if let Some(name) = value.as_str() {
+                            schema.entities.push(EntityDef::new(name));
+                        }
+                    }
+                }
+            }
+
+            // Parse entity descriptions
+            if let Some(descs) = obj.get("entity_descriptions") {
+                if let Some(descs_obj) = descs.as_object() {
+                    for (k, v) in descs_obj {
+                        if let Some(desc) = v.as_str() {
+                            schema.entity_descriptions.insert(k.clone(), desc.to_string());
+                        }
+                    }
+                }
+            }
+
+            // Parse classifications
+            if let Some(classifications) = obj.get("classifications") {
+                if let Some(cls_arr) = classifications.as_array() {
+                    for cls_value in cls_arr {
+                        if let Some(cls_obj) = cls_value.as_object() {
+                            if let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
+                                let labels = cls_obj
+                                    .get("labels")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+
+                                let mut cls = ClassificationDef::new(task, labels);
+
+                                if let Some(multi) = cls_obj.get("multi_label").and_then(|v| v.as_bool()) {
+                                    cls = cls.multi_label(multi);
+                                }
+                                if let Some(threshold) = cls_obj.get("cls_threshold").and_then(|v| v.as_f64()) {
+                                    cls = cls.with_threshold(threshold as f32);
+                                }
+
+                                schema.classifications.push(cls);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Parse structures
+            if let Some(structures) = obj.get("json_structures") {
+                if let Some(struct_arr) = structures.as_array() {
+                    for struct_value in struct_arr {
+                        if let Some(struct_obj) = struct_value.as_object() {
+                            for (name, fields_value) in struct_obj {
+                                let mut structure = StructureDef::new(name);
+                                if let Some(fields_obj) = fields_value.as_object() {
+                                    for (field_name, field_value) in fields_obj {
+                                        let mut field = FieldDef::new(field_name);
+                                        if let Some(field_obj) = field_value.as_object() {
+                                            if let Some(choices) = field_obj.get("choices").and_then(|v| v.as_array()) {
+                                                let choice_strings: Vec<String> = choices
+                                                    .iter()
+                                                    .filter_map(|v| v.as_str().map(String::from))
+                                                    .collect();
+                                                field = field.with_choices(choice_strings);
+                                            }
+                                        }
+                                        structure.fields.push(field);
+                                    }
+                                }
+                                schema.structures.push(structure);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Parse structure descriptions
+            if let Some(descs) = obj.get("json_descriptions") {
+                if let Some(descs_obj) = descs.as_object() {
+                    for (struct_name, fields_descs) in descs_obj {
+                        if let Some(fields_obj) = fields_descs.as_object() {
+                            let mut inner_map = HashMap::new();
+                            for (field_name, desc) in fields_obj {
+                                if let Some(desc_str) = desc.as_str() {
+                                    inner_map.insert(field_name.clone(), desc_str.to_string());
+                                }
+                            }
+                            schema.json_descriptions.insert(struct_name.clone(), inner_map);
+                        }
+                    }
+                }
+            }
+
+            // Parse relations
+            if let Some(relations) = obj.get("relations") {
+                if let Some(rel_arr) = relations.as_array() {
+                    for rel_value in rel_arr {
+                        if let Some(rel_obj) = rel_value.as_object() {
+                            for (name, _) in rel_obj {
+                                schema.relations.push(RelationDef::new(name));
+                            }
+                        }
+                    }
+                } else if let Some(rel_arr_str) = relations.as_array() {
+                    for rel_value in rel_arr_str {
+                        if let Some(name) = rel_value.as_str() {
+                            schema.relations.push(RelationDef::new(name));
+                        }
+                    }
+                }
+            }
+        }
+
+        schema.validate()?;
+        Ok(schema)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_entity_def() {
+        let entity = EntityDef::new("person")
+            .with_description("Names of people")
+            .with_threshold(0.6);
+
+        assert_eq!(entity.name, "person");
+        assert_eq!(entity.description, Some("Names of people".to_string()));
+        assert_eq!(entity.threshold, Some(0.6));
+    }
+
+    #[test]
+    fn test_classification_def() {
+        let cls = ClassificationDef::new("sentiment", vec!["positive".to_string(), "negative".to_string()])
+            .multi_label(true)
+            .with_threshold(0.4);
+
+        assert_eq!(cls.task, "sentiment");
+        assert!(cls.multi_label);
+        assert!((cls.cls_threshold - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_field_def() {
+        let field = FieldDef::new("price")
+            .with_dtype(FieldDtype::Str)
+            .with_description("Product price");
+
+        assert_eq!(field.name, "price");
+        assert_eq!(field.dtype, FieldDtype::Str);
+        assert_eq!(field.description, Some("Product price".to_string()));
+    }
+
+    #[test]
+    fn test_schema_validation() {
+        let schema = Schema::new();
+        assert!(schema.validate().is_err());
+
+        let schema = Schema::new()
+            .entities(vec![EntityDef::new("person")]);
+        assert!(schema.validate().is_ok());
+    }
+
+    #[test]
+    fn test_schema_to_dict() {
+        let schema = Schema::new()
+            .entities(vec![
+                EntityDef::new("person").with_description("Names of people"),
+                EntityDef::new("company"),
+            ])
+            .classifications(vec![
+                ClassificationDef::new("sentiment", vec!["positive".to_string(), "negative".to_string()]),
+            ]);
+
+        let dict = schema.to_dict();
+        assert!(dict.get("entities").is_some());
+        assert!(dict.get("classifications").is_some());
+    }
+
+    #[test]
+    fn test_schema_from_dict() {
+        let dict = serde_json::json!({
+            "entities": {
+                "person": "Names of people",
+                "company": ""
+            },
+            "classifications": [
+                {
+                    "task": "sentiment",
+                    "labels": ["positive", "negative"],
+                    "multi_label": false,
+                    "cls_threshold": 0.5
+                }
+            ]
+        });
+
+        let schema = Schema::from_dict(&dict).unwrap();
+        assert_eq!(schema.entities.len(), 2);
+        assert_eq!(schema.classifications.len(), 1);
+        assert_eq!(schema.classifications[0].task, "sentiment");
+    }
+
+    #[test]
+    fn test_regex_validator() {
+        let validator = RegexValidator::new(r"^\d+$").unwrap();
+        assert!(validator.validate("123").unwrap());
+        assert!(!validator.validate("abc").unwrap());
+    }
+
+    #[test]
+    fn test_task_type_from_str() {
+        assert_eq!("entities".parse::<TaskType>().unwrap(), TaskType::Entities);
+        assert_eq!("classifications".parse::<TaskType>().unwrap(), TaskType::Classifications);
+        assert!("invalid".parse::<TaskType>().is_err());
+    }
+
+    #[test]
+    fn test_field_dtype_from_str() {
+        assert_eq!("str".parse::<FieldDtype>().unwrap(), FieldDtype::Str);
+        assert_eq!("list".parse::<FieldDtype>().unwrap(), FieldDtype::List);
+        assert!("invalid".parse::<FieldDtype>().is_err());
+    }
+}
