@@ -59,6 +59,47 @@ impl EncoderType {
             EncoderType::Bert
         }
     }
+
+    /// Detect encoder type from weight names in the safetensors file.
+    ///
+    /// Checks for DeBERTa-specific weight patterns (e.g., `rel_embeddings`, `key_proj`).
+    pub fn from_weight_names(weight_names: &[String]) -> Self {
+        let has_deberta = weight_names.iter().any(|name| {
+            name.contains("rel_embeddings") || name.contains("key_proj") || name.contains("query_proj")
+        });
+        if has_deberta {
+            EncoderType::DebertaV2
+        } else {
+            EncoderType::Bert
+        }
+    }
+
+    /// Detect encoder type from a safetensors file path.
+    ///
+    /// Reads the safetensors header to get weight names and detects the encoder type.
+    pub fn from_safetensors_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        use std::io::Read;
+        let path = path.as_ref();
+        let mut file = std::fs::File::open(path)
+            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to open safetensors: {e}"), path))?;
+
+        // Read header length (first 8 bytes)
+        let mut len_bytes = [0u8; 8];
+        file.read_exact(&mut len_bytes)
+            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path))?;
+        let header_len = u64::from_le_bytes(len_bytes) as usize;
+
+        // Read header JSON
+        let mut header_bytes = vec![0u8; header_len];
+        file.read_exact(&mut header_bytes)
+            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path))?;
+
+        let header: std::collections::HashMap<String, serde_json::Value> = serde_json::from_slice(&header_bytes)
+            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to parse header: {e}"), path))?;
+
+        let weight_names: Vec<String> = header.keys().cloned().collect();
+        Ok(Self::from_weight_names(&weight_names))
+    }
 }
 
 /// Candle-based transformer encoder for GLiNER2.
@@ -133,6 +174,7 @@ impl CandleEncoder {
         config: &ExtractorConfig,
         device: Device,
     ) -> Result<Self> {
+        // Detect encoder type from model name
         let encoder_type = EncoderType::from_model_name(&config.model_name);
         let hidden_size = config.hidden_size;
 
@@ -193,6 +235,21 @@ impl CandleEncoder {
         config: &ExtractorConfig,
         encoder_type: EncoderType,
     ) -> Result<EncoderModel> {
+        // GLiNER2 weights are stored with "encoder." prefix in safetensors
+        // (e.g., "encoder.embeddings.word_embeddings.weight")
+        // Candle's BERT/DeBERTa models expect names without the prefix
+        // (e.g., "embeddings.word_embeddings.weight")
+        // So we add the "encoder" prefix to the VarBuilder to match the stored names.
+        let vb = vb.pp("encoder");
+
+        // Detect encoder type from weight names in the file
+        // This is needed because GLiNER2 models can use BERT or DeBERTa encoders
+        let encoder_type = if let Ok(path) = std::env::var("GLINER2_WEIGHTS_PATH") {
+            EncoderType::from_safetensors_path(&path).unwrap_or(encoder_type)
+        } else {
+            encoder_type
+        };
+
         match encoder_type {
             EncoderType::Bert => {
                 let bert_config = Self::build_bert_config(config);
