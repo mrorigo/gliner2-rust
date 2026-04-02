@@ -367,7 +367,9 @@ impl Extractor {
                 let sample_indices = indices_tensor.narrow(0, sample_idx, 1)
                     .map_err(|e| GlinerError::model_loading(format!("Failed to narrow indices: {e}")))?
                     .squeeze(0)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze indices: {e}")))?;
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze indices: {e}")))?
+                    .narrow(0, 0, word_count)
+                    .map_err(|e| GlinerError::model_loading(format!("Failed to trim padded indices: {e}")))?;
 
                 // encoder_output: (batch, seq_len, hidden)
                 // Gather: encoder_output[sample_idx, indices] -> (word_count, hidden)

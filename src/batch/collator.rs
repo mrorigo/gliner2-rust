@@ -143,6 +143,13 @@ impl ExtractorCollator {
         }
     }
 
+    /// Clone this collator but override `max_len` for a single call path.
+    pub fn with_runtime_max_len(&self, max_len: Option<usize>) -> Self {
+        let mut cloned = self.clone();
+        cloned.max_len = max_len;
+        cloned
+    }
+
     /// Collate a batch of samples into a `PreprocessedBatch`.
     ///
     /// # Arguments
@@ -840,6 +847,22 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_max_len_override() {
+        let tokenizer = WhitespaceTokenizer::new();
+        let base_collator = ExtractorCollator::with_max_len(tokenizer, false, None);
+        let collator = base_collator.with_runtime_max_len(Some(3));
+        let schema = create_test_schema();
+
+        let long_text = String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
+        let samples = vec![(long_text, schema)];
+        let batch = collator.collate(&samples);
+
+        assert!(batch.is_ok());
+        let batch = batch.unwrap();
+        assert_eq!(batch.sample_text_tokens(0).unwrap().len(), 3);
+    }
+
+    #[test]
     fn test_entity_token_building() {
         let tokenizer = WhitespaceTokenizer::new();
         let collator = ExtractorCollator::new(tokenizer, false);
@@ -848,10 +871,7 @@ mod tests {
         let entities_obj = serde_json::json!({
             "person": "Names of people",
             "company": "Organization names"
-        })
-        .as_object()
-        .cloned()
-        .unwrap();
+        });
 
         let tokens = collator.build_entity_tokens(&entities, &entities_obj);
 

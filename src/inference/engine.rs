@@ -25,9 +25,7 @@
 //! ```
 
 use std::path::Path;
-use std::sync::Arc;
 
-use rayon::prelude::*;
 use serde_json::Value as JsonValue;
 use candle_core::{Device, Tensor};
 use tokenizers::Tokenizer as HfTokenizer;
@@ -37,7 +35,7 @@ use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
 use crate::model::Extractor;
 use crate::schema::builder::SchemaBuilder;
-use crate::schema::types::{EntityDef, FieldDtype, RegexValidator, Schema, TaskType};
+use crate::schema::types::{RegexValidator, Schema};
 use crate::tokenizer::WhitespaceTokenizer;
 
 /// Extraction result for a single text.
@@ -141,26 +139,25 @@ impl GLiNER2 {
     ///
     /// A loaded `GLiNER2` engine.
     pub fn from_pretrained(model_name_or_path: impl AsRef<Path>) -> Result<Self> {
-        let path = model_name_or_path.as_ref();
-        let config = ExtractorConfig::new(
-            path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "fastino/gliner2-base-v1".to_string()),
-        );
+        let input = model_name_or_path.as_ref();
+        let input_str = input.to_string_lossy().to_string();
+        let is_local = input.exists();
+        let config = ExtractorConfig::new(input_str.clone());
 
         let mut model = Extractor::new(&config)?;
 
-        // Try to load weights if path exists
-        if path.exists() {
-            model.load_weights(path)?;
+        // Load weights from local path or download from Hub for model IDs.
+        if is_local {
+            model.load_weights(input)?;
+        } else if let Some(model_path) = Self::download_model_weights(&input_str) {
+            model.load_weights(model_path)?;
         }
 
         let ws_tokenizer = WhitespaceTokenizer::new();
 
-        // Try to load HuggingFace tokenizer from local path or model name
-        let hf_tokenizer = if path.exists() {
-            // Try loading from local directory first
-            Self::load_hf_tokenizer_from_path(path).or_else(|| Self::load_hf_tokenizer(&config))
+        // Try local tokenizer first for local paths; otherwise use config/HF Hub.
+        let hf_tokenizer = if is_local {
+            Self::load_hf_tokenizer_from_path(input).or_else(|| Self::load_hf_tokenizer(&config))
         } else {
             Self::load_hf_tokenizer(&config)
         };
@@ -193,6 +190,35 @@ impl GLiNER2 {
             default_threshold: 0.5,
             device,
         })
+    }
+
+    /// Download model weights (`model.safetensors`) from HuggingFace Hub.
+    fn download_model_weights(model_id: &str) -> Option<std::path::PathBuf> {
+        use hf_hub::{api::sync::ApiBuilder, Repo, RepoType};
+
+        let repo = Repo::with_revision(
+            model_id.to_string(),
+            RepoType::Model,
+            "main".to_string(),
+        );
+
+        let api = ApiBuilder::new()
+            .with_progress(true)
+            .build()
+            .ok()?;
+
+        let repo_api = api.repo(repo);
+        match repo_api.get("model.safetensors") {
+            Ok(path) => Some(path),
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to download model weights for '{}': {}",
+                    model_id,
+                    e
+                );
+                None
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -701,7 +727,11 @@ impl GLiNER2 {
         max_len: Option<usize>,
     ) -> Result<Vec<ExtractionResult>> {
         // Collate batch
-        let batch = self.collator.collate(samples)?;
+        let collator = match max_len {
+            Some(override_len) => self.collator.with_runtime_max_len(Some(override_len)),
+            None => self.collator.clone(),
+        };
+        let batch = collator.collate(samples)?;
 
         // Move to device
         let batch = batch.to(self.device.clone(), None)?;
@@ -1154,38 +1184,166 @@ impl GLiNER2 {
         threshold: f32,
         include_confidence: bool,
     ) -> Result<JsonValue> {
-        // Placeholder implementation
-        Ok(JsonValue::String("unknown".to_string()))
+        // Get schema embeddings for this sample/schema.
+        let sample_schema_embs = output.schema_embeddings
+            .get(sample_idx)
+            .and_then(|sample| sample.get(schema_idx))
+            .ok_or_else(|| GlinerError::inference("Missing schema embeddings for classification task"))?;
+        if sample_schema_embs.is_empty() {
+            return Ok(JsonValue::Null);
+        }
+
+        // Parse schema tokens and map label markers to corresponding special-token embeddings.
+        // In this collator, labels use "[C]" (same token as structure fields).
+        let schema_tokens = batch
+            .schema_tokens(sample_idx, schema_idx)
+            .ok_or_else(|| GlinerError::inference("Missing schema tokens for classification task"))?;
+        let mut labels = Vec::new();
+        let mut label_emb_indices = Vec::new();
+        let mut special_token_counter = 0usize;
+        for (i, token) in schema_tokens.iter().enumerate() {
+            if token.starts_with('[') && token.ends_with(']') {
+                if (token == "[C]" || token == "[L]") && i + 1 < schema_tokens.len() {
+                    labels.push(schema_tokens[i + 1].clone());
+                    label_emb_indices.push(special_token_counter);
+                }
+                special_token_counter += 1;
+            }
+        }
+
+        if labels.is_empty() {
+            return Ok(JsonValue::Null);
+        }
+
+        let mut label_embs = Vec::with_capacity(label_emb_indices.len());
+        for emb_idx in label_emb_indices {
+            if let Some(emb) = sample_schema_embs.get(emb_idx) {
+                label_embs.push(emb.clone());
+            }
+        }
+        if label_embs.is_empty() {
+            return Ok(JsonValue::Null);
+        }
+
+        let label_embs_tensor = Tensor::cat(&label_embs, 0)
+            .map_err(|e| GlinerError::inference(format!("Failed to stack label embeddings: {e}")))?;
+        let logits = self.model.classifier.forward(&label_embs_tensor)?;
+        let logits_vec: Vec<f32> = logits
+            .flatten_all()
+            .and_then(|t| t.to_vec1::<f32>())
+            .map_err(|e| GlinerError::inference(format!("Failed to decode classification logits: {e}")))?;
+        let probs: Vec<f32> = logits_vec
+            .into_iter()
+            .map(|v| 1.0 / (1.0 + (-v).exp()))
+            .collect();
+
+        let is_multi_label = Self::is_multilabel_task(batch, sample_idx, schema_idx);
+
+        if is_multi_label {
+            let mut selected = Vec::new();
+            for (i, label) in labels.iter().enumerate() {
+                let prob = probs.get(i).copied().unwrap_or(0.0);
+                if prob < threshold {
+                    continue;
+                }
+                if include_confidence {
+                    selected.push(serde_json::json!({
+                        "label": label,
+                        "confidence": prob
+                    }));
+                } else {
+                    selected.push(JsonValue::String(label.clone()));
+                }
+            }
+            return Ok(JsonValue::Array(selected));
+        }
+
+        // Single-label: pick the argmax.
+        let mut best_idx = 0usize;
+        let mut best_prob = f32::MIN;
+        for (idx, prob) in probs.iter().enumerate() {
+            if *prob > best_prob {
+                best_prob = *prob;
+                best_idx = idx;
+            }
+        }
+        let best_label = labels.get(best_idx).cloned().unwrap_or_else(|| "unknown".to_string());
+
+        if include_confidence {
+            Ok(serde_json::json!({
+                "label": best_label,
+                "confidence": best_prob
+            }))
+        } else {
+            Ok(JsonValue::String(best_label))
+        }
     }
 
     /// Extract relations from model output.
     fn extract_relations_from_output(
         &self,
-        output: &crate::model::ExtractorOutput,
-        batch: &PreprocessedBatch,
-        sample_idx: usize,
-        schema_idx: usize,
-        threshold: f32,
-        include_confidence: bool,
-        include_spans: bool,
+        _output: &crate::model::ExtractorOutput,
+        _batch: &PreprocessedBatch,
+        _sample_idx: usize,
+        _schema_idx: usize,
+        _threshold: f32,
+        _include_confidence: bool,
+        _include_spans: bool,
     ) -> Result<JsonValue> {
-        // Placeholder implementation
-        Ok(JsonValue::Array(Vec::new()))
+        Err(GlinerError::inference(
+            "Relation extraction inference is not implemented yet",
+        ))
     }
 
     /// Extract structures from model output.
     fn extract_structures_from_output(
         &self,
-        output: &crate::model::ExtractorOutput,
-        batch: &PreprocessedBatch,
-        sample_idx: usize,
-        schema_idx: usize,
-        threshold: f32,
-        include_confidence: bool,
-        include_spans: bool,
+        _output: &crate::model::ExtractorOutput,
+        _batch: &PreprocessedBatch,
+        _sample_idx: usize,
+        _schema_idx: usize,
+        _threshold: f32,
+        _include_confidence: bool,
+        _include_spans: bool,
     ) -> Result<JsonValue> {
-        // Placeholder implementation
-        Ok(JsonValue::Array(Vec::new()))
+        Err(GlinerError::inference(
+            "Structure extraction inference is not implemented yet",
+        ))
+    }
+
+    fn is_multilabel_task(batch: &PreprocessedBatch, sample_idx: usize, schema_idx: usize) -> bool {
+        let task_name = batch
+            .schema_tokens(sample_idx, schema_idx)
+            .and_then(|tokens| tokens.get(2))
+            .cloned();
+
+        let Some(task_name) = task_name else {
+            return false;
+        };
+
+        let Some(schema_json) = batch.original_schemas.get(sample_idx) else {
+            return false;
+        };
+
+        schema_json
+            .get("classifications")
+            .and_then(|v| v.as_array())
+            .and_then(|items| {
+                items.iter().find_map(|item| {
+                    let obj = item.as_object()?;
+                    let task = obj.get("task")?.as_str()?;
+                    if task == task_name {
+                        Some(
+                            obj.get("multi_label")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                        )
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(false)
     }
 
     // -------------------------------------------------------------------------

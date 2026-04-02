@@ -114,6 +114,18 @@ fn test_classification_pipeline() {
 
     let result = engine.classify_text("I love this product!", &tasks, None, false);
     assert!(result.is_ok(), "Classification failed: {:?}", result.err());
+
+    let result = result.unwrap();
+    let sentiment = result.get("sentiment").and_then(|v| v.as_str());
+    assert!(
+        sentiment.is_some(),
+        "Expected string label for sentiment task, got: {result:?}"
+    );
+    assert_ne!(
+        sentiment.unwrap(),
+        "unknown",
+        "Classification should not return placeholder label"
+    );
 }
 
 /// Test that the tokenizer produces valid token IDs.

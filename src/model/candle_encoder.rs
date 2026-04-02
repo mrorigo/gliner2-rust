@@ -52,10 +52,11 @@ pub enum EncoderType {
 impl EncoderType {
     /// Detect encoder type from model name.
     ///
-    /// Returns `DebertaV2` if the name contains "deberta", otherwise `Bert`.
+    /// Returns `DebertaV3` for DeBERTa-v3/GLiNER2 model IDs, `DebertaV2`
+    /// for other DeBERTa names, otherwise `Bert`.
     pub fn from_model_name(model_name: &str) -> Self {
         let lower = model_name.to_lowercase();
-        if lower.contains("deberta-v3") || lower.contains("deberta-v3") {
+        if lower.contains("deberta-v3") || lower.contains("gliner2") {
             EncoderType::DebertaV3
         } else if lower.contains("deberta") {
             EncoderType::DebertaV2
@@ -505,11 +506,11 @@ mod tests {
         );
         assert_eq!(
             EncoderType::from_model_name("microsoft/deberta-v3-base"),
-            EncoderType::DebertaV2
+            EncoderType::DebertaV3
         );
         assert_eq!(
             EncoderType::from_model_name("fastino/gliner2-base-v1"),
-            EncoderType::Bert
+            EncoderType::DebertaV3
         );
     }
 
