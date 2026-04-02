@@ -1392,6 +1392,9 @@ impl GLiNER2 {
         let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
         let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
 
+        let rel_name = schema_tokens.get(2).cloned().unwrap_or_default();
+        let rel_threshold = Self::relation_threshold(batch, sample_idx, &rel_name).unwrap_or(threshold);
+
         let mut instances = Vec::new();
         for inst in 0..pred_count {
             let mut top_fields: Vec<Option<(String, f32, usize, usize)>> = vec![None; field_names.len()];
@@ -1413,7 +1416,7 @@ impl GLiNER2 {
                     text_tokens,
                     start_mappings,
                     end_mappings,
-                    threshold,
+                    rel_threshold,
                 );
 
                 spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1565,11 +1568,14 @@ impl GLiNER2 {
         let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
         let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
 
+        let struct_name = schema_tokens.get(2).cloned().unwrap_or_default();
         let mut instances = Vec::new();
         for inst in 0..pred_count {
             let mut instance = serde_json::Map::new();
 
             for (field_idx, field_name) in field_names.iter().enumerate() {
+                let (dtype, field_threshold, validators) =
+                    Self::structure_field_metadata(batch, sample_idx, &struct_name, field_name);
                 let mut spans = Self::collect_scored_spans(
                     &span_rep_data,
                     &struct_proj_data,
@@ -1586,11 +1592,32 @@ impl GLiNER2 {
                     text_tokens,
                     start_mappings,
                     end_mappings,
-                    threshold,
+                    field_threshold.unwrap_or(threshold),
                 );
+                if !validators.is_empty() {
+                    spans.retain(|(text, _, _, _)| self.apply_validators(text, &validators));
+                }
 
-                let formatted = Self::format_spans(&mut spans, include_confidence, include_spans);
-                instance.insert(field_name.clone(), formatted);
+                if dtype == "str" {
+                    spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    if let Some((text, conf, start, end)) = spans.into_iter().next() {
+                        let v = if include_spans && include_confidence {
+                            serde_json::json!({ "text": text, "confidence": conf, "start": start, "end": end })
+                        } else if include_spans {
+                            serde_json::json!({ "text": text, "start": start, "end": end })
+                        } else if include_confidence {
+                            serde_json::json!({ "text": text, "confidence": conf })
+                        } else {
+                            JsonValue::String(text)
+                        };
+                        instance.insert(field_name.clone(), v);
+                    } else {
+                        instance.insert(field_name.clone(), JsonValue::Null);
+                    }
+                } else {
+                    let formatted = Self::format_spans(&mut spans, include_confidence, include_spans);
+                    instance.insert(field_name.clone(), formatted);
+                }
             }
 
             let has_content = instance.values().any(|v| match v {
@@ -1736,6 +1763,63 @@ impl GLiNER2 {
             .collect();
 
         JsonValue::Array(formatted)
+    }
+
+    fn relation_threshold(batch: &PreprocessedBatch, sample_idx: usize, rel_name: &str) -> Option<f32> {
+        let schema_json = batch.original_schemas.get(sample_idx)?;
+        schema_json
+            .get("relation_metadata")
+            .and_then(|v| v.as_object())
+            .and_then(|meta| meta.get(rel_name))
+            .and_then(|v| v.get("threshold"))
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+    }
+
+    fn structure_field_metadata(
+        batch: &PreprocessedBatch,
+        sample_idx: usize,
+        struct_name: &str,
+        field_name: &str,
+    ) -> (String, Option<f32>, Vec<RegexValidator>) {
+        let Some(schema_json) = batch.original_schemas.get(sample_idx) else {
+            return ("list".to_string(), None, Vec::new());
+        };
+        let Some(structs) = schema_json.get("json_structures").and_then(|v| v.as_array()) else {
+            return ("list".to_string(), None, Vec::new());
+        };
+
+        for item in structs {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let Some(fields) = obj.get(struct_name).and_then(|v| v.as_object()) else {
+                continue;
+            };
+            let Some(field_cfg) = fields.get(field_name) else {
+                continue;
+            };
+
+            if let Some(cfg_obj) = field_cfg.as_object() {
+                let dtype = cfg_obj
+                    .get("dtype")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("list")
+                    .to_string();
+                let threshold = cfg_obj
+                    .get("threshold")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32);
+                let validators = cfg_obj
+                    .get("validators")
+                    .and_then(|v| serde_json::from_value::<Vec<RegexValidator>>(v.clone()).ok())
+                    .unwrap_or_default();
+                return (dtype, threshold, validators);
+            }
+            return ("list".to_string(), None, Vec::new());
+        }
+
+        ("list".to_string(), None, Vec::new())
     }
 
     fn is_multilabel_task(batch: &PreprocessedBatch, sample_idx: usize, schema_idx: usize) -> bool {

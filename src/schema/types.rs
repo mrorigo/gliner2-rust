@@ -663,30 +663,44 @@ impl Schema {
                     let mut obj = serde_json::Map::new();
                     let mut fields = serde_json::Map::new();
                     for field in &s.fields {
-                        if let Some(choices) = &field.choices {
+                        let has_metadata = field.choices.is_some()
+                            || field.description.is_some()
+                            || field.threshold.is_some()
+                            || field.validators.is_some()
+                            || field.dtype != FieldDtype::List;
+
+                        if has_metadata {
                             let mut field_obj = serde_json::Map::new();
-                            field_obj.insert(
-                                "value".to_string(),
-                                serde_json::Value::String("".to_string()),
-                            );
-                            field_obj.insert(
-                                "choices".to_string(),
-                                serde_json::Value::Array(
-                                    choices
-                                        .iter()
-                                        .map(|c| serde_json::Value::String(c.clone()))
-                                        .collect(),
-                                ),
-                            );
-                            fields.insert(
-                                field.name.clone(),
-                                serde_json::Value::Object(field_obj),
-                            );
+                            field_obj.insert("value".to_string(), serde_json::Value::String("".to_string()));
+                            field_obj.insert("dtype".to_string(), serde_json::Value::String(field.dtype.to_string()));
+
+                            if let Some(choices) = &field.choices {
+                                field_obj.insert(
+                                    "choices".to_string(),
+                                    serde_json::Value::Array(
+                                        choices
+                                            .iter()
+                                            .map(|c| serde_json::Value::String(c.clone()))
+                                            .collect(),
+                                    ),
+                                );
+                            }
+                            if let Some(description) = &field.description {
+                                field_obj.insert("description".to_string(), serde_json::Value::String(description.clone()));
+                            }
+                            if let Some(threshold) = field.threshold {
+                                if let Some(n) = serde_json::Number::from_f64(threshold as f64) {
+                                    field_obj.insert("threshold".to_string(), serde_json::Value::Number(n));
+                                }
+                            }
+                            if let Some(validators) = &field.validators {
+                                let vals = serde_json::to_value(validators).unwrap_or(serde_json::Value::Array(vec![]));
+                                field_obj.insert("validators".to_string(), vals);
+                            }
+
+                            fields.insert(field.name.clone(), serde_json::Value::Object(field_obj));
                         } else {
-                            fields.insert(
-                                field.name.clone(),
-                                serde_json::Value::String("".to_string()),
-                            );
+                            fields.insert(field.name.clone(), serde_json::Value::String("".to_string()));
                         }
                     }
                     obj.insert(s.name.clone(), serde_json::Value::Object(fields));
@@ -741,6 +755,23 @@ impl Schema {
                 "relations".to_string(),
                 serde_json::Value::Array(relations),
             );
+
+            let relation_meta: serde_json::Map<String, serde_json::Value> = self
+                .relations
+                .iter()
+                .filter_map(|r| {
+                    r.threshold.and_then(|t| {
+                        serde_json::Number::from_f64(t as f64).map(|n| {
+                            let mut meta = serde_json::Map::new();
+                            meta.insert("threshold".to_string(), serde_json::Value::Number(n));
+                            (r.name.clone(), serde_json::Value::Object(meta))
+                        })
+                    })
+                })
+                .collect();
+            if !relation_meta.is_empty() {
+                dict.insert("relation_metadata".to_string(), serde_json::Value::Object(relation_meta));
+            }
         }
 
         serde_json::Value::Object(dict)
