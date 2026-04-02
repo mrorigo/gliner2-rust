@@ -1,9 +1,9 @@
 //! Span representation layer for GLiNER2 (markerV0 mode).
 //!
 //! Architecture from GLiNER2 Python implementation:
-//! - project_start: Linear(768, 3072) + LayerNorm(3072) + Linear(3072, 768)
-//! - project_end: Linear(768, 3072) + LayerNorm(3072) + Linear(3072, 768)
-//! - out_project: Linear(1536, 3072) + LayerNorm(3072) + Linear(3072, 768)
+//! - project_start: Linear(768, 3072) + ReLU + Linear(3072, 768)
+//! - project_end: Linear(768, 3072) + ReLU + Linear(3072, 768)
+//! - out_project: Linear(1536, 3072) + ReLU + Linear(3072, 768)
 //!
 //! For each token position i and span width w:
 //! - start_rep = project_start(token_embs[i])
@@ -86,19 +86,19 @@ impl SpanRepresentationLayer {
 
     fn build_from_varbuilder(vb: VarBuilder, hidden_size: usize, max_width: usize, device: Device) -> Result<Self> {
         let intermediate = hidden_size * 4; // 3072 for 768 hidden
-        
+
         // project_start: Linear(768→3072) + GELU + Linear(3072→768)
         let project_start_0 = candle_nn::linear(hidden_size, intermediate, vb.pp("project_start").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_start_0: {e}")))?;
         let project_start_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_start").pp("3"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_start_1: {e}")))?;
-        
+
         // project_end: Linear(768→3072) + GELU + Linear(3072→768)
         let project_end_0 = candle_nn::linear(hidden_size, intermediate, vb.pp("project_end").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_end_0: {e}")))?;
         let project_end_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_end").pp("3"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_end_1: {e}")))?;
-        
+
         // out_project: Linear(1536→3072) + GELU + Linear(3072→768)
         let out_project_0 = candle_nn::linear(hidden_size * 2, intermediate, vb.pp("out_project").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create out_project_0: {e}")))?;
@@ -126,8 +126,8 @@ impl SpanRepresentationLayer {
     fn project_start(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.project_start_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("project_start_0 failed: {e}")))?;
-        let x = x.gelu()
-            .map_err(|e| GlinerError::model_loading(format!("project_start gelu failed: {e}")))?;
+        let x = x.relu()
+            .map_err(|e| GlinerError::model_loading(format!("project_start relu failed: {e}")))?;
         self.project_start_1.forward(&x)
             .map_err(|e| GlinerError::model_loading(format!("project_start_1 failed: {e}")))
     }
@@ -135,8 +135,8 @@ impl SpanRepresentationLayer {
     fn project_end(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.project_end_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("project_end_0 failed: {e}")))?;
-        let x = x.gelu()
-            .map_err(|e| GlinerError::model_loading(format!("project_end gelu failed: {e}")))?;
+        let x = x.relu()
+            .map_err(|e| GlinerError::model_loading(format!("project_end relu failed: {e}")))?;
         self.project_end_1.forward(&x)
             .map_err(|e| GlinerError::model_loading(format!("project_end_1 failed: {e}")))
     }
@@ -144,8 +144,8 @@ impl SpanRepresentationLayer {
     fn out_project(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.out_project_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("out_project_0 failed: {e}")))?;
-        let x = x.gelu()
-            .map_err(|e| GlinerError::model_loading(format!("out_project gelu failed: {e}")))?;
+        let x = x.relu()
+            .map_err(|e| GlinerError::model_loading(format!("out_project relu failed: {e}")))?;
         self.out_project_1.forward(&x)
             .map_err(|e| GlinerError::model_loading(format!("out_project_1 failed: {e}")))
     }
@@ -184,6 +184,8 @@ impl SpanRepresentationLayer {
             // Concat and project out
             let combined = Tensor::cat(&[&start_proj, &end_proj], 1)
                 .map_err(|e| GlinerError::model_loading(format!("Failed to concat: {e}")))?;
+            let combined = combined.relu()
+                .map_err(|e| GlinerError::model_loading(format!("Failed to apply pre-out-project relu: {e}")))?;
             let span_rep = self.out_project(&combined)?;
 
             // Pad to seq_len if needed

@@ -324,8 +324,8 @@ impl CountEmbedLayer {
         // GRU input is positional sequence (matching CountLSTMv2)
         let gru_input = pos_embs_expanded;
 
-        // Run GRU, then add broadcast entity embeddings before transformer
-        let gru_output = self.gru.forward(&gru_input, None)?;
+        // Run GRU with initial hidden state from entity embeddings (matching Python CountLSTMv2)
+        let gru_output = self.gru.forward(&gru_input, Some(entity_embs))?;
         let transformer_input = gru_output.add(&entity_embs_expanded)?;
 
         // CountLSTMv2 path:

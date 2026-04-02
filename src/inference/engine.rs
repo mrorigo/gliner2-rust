@@ -981,6 +981,7 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
 
+
         // Get span mask dimensions
         let span_mask_dims = span_mask.dims();
         if span_mask_dims.len() != 2 {
@@ -1000,6 +1001,7 @@ impl GLiNER2 {
             Ok(t) => t.to_vec1().unwrap_or_default(),
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
+
 
         // Get spans indices
         let spans_idx_data: Vec<u32> = match spans_idx.flatten_all() {
@@ -1063,6 +1065,8 @@ impl GLiNER2 {
         // Step 5: Extract entities for each entity type
         for (entity_idx, entity_type) in entity_types.iter().enumerate() {
             let mut found_entities: Vec<JsonValue> = Vec::new();
+
+
 
             for i in 0..mask_seq_len {
                 for w in 0..mask_max_width {
