@@ -187,43 +187,68 @@ fn test_python_reference_parity_fixtures() {
     let mut engine = GLiNER2::new(&config).expect("failed to init rust engine");
     engine.load_weights(&model_path).expect("failed to load rust weights");
 
-    let entities_text = "Apple CEO Tim Cook announced iPhone in Cupertino, California.";
-    let class_text = "I love this product.";
-    let relations_text = "Apple CEO Tim Cook announced iPhone in Cupertino, California.";
-    let structure_text = "Apple announced iPhone in Cupertino, California.";
+    let fixtures = vec![
+        (
+            "basic_apple",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "I love this product.",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "Apple announced iPhone in Cupertino, California.",
+            "product_info",
+            0.0f32,
+        ),
+        (
+            "microsoft_founder",
+            "Microsoft was founded by Bill Gates in Albuquerque.",
+            "Microsoft was founded by Bill Gates in Albuquerque.",
+            "Microsoft was founded by Bill Gates in Albuquerque.",
+            "Microsoft was founded by Bill Gates in Albuquerque.",
+            "profile",
+            0.0f32,
+        ),
+    ];
 
-    let entities_raw = engine
-        .extract_entities(entities_text, &["person", "organization", "location"], Some(0.5), false, false, None)
-        .expect("rust entities failed");
-    let class_raw = engine
-        .classify_text(
-            class_text,
-            &[("sentiment".to_string(), vec!["positive".to_string(), "negative".to_string()])],
-            Some(0.5),
-            false,
-        )
-        .expect("rust classification failed");
-    let rel_raw = engine
-        .extract_relations(relations_text, &["works_for"], Some(0.5), false, false)
-        .expect("rust relation failed");
-    let struct_schema = SchemaBuilder::new()
-        .structure("product_info")
-        .field("name")
-        .done_field()
-        .field("company")
-        .done_field()
-        .done_structure()
-        .build()
-        .expect("failed to build rust structure schema");
-    let struct_raw = engine
-        .extract(structure_text, &struct_schema, 0.5, false, false, None)
-        .expect("rust structure failed");
+    let mut rust_fixtures = Vec::new();
+    for (id, entities_text, class_text, relations_text, structure_text, structure_key, structure_threshold) in fixtures {
+        let entities_raw = engine
+            .extract_entities(entities_text, &["person", "organization", "location"], Some(0.5), false, false, None)
+            .expect("rust entities failed");
+        let class_raw = engine
+            .classify_text(
+                class_text,
+                &[("sentiment".to_string(), vec!["positive".to_string(), "negative".to_string()])],
+                Some(0.5),
+                false,
+            )
+            .expect("rust classification failed");
+        let rel_raw = engine
+            .extract_relations(relations_text, &["works_for"], Some(0.5), false, false)
+            .expect("rust relation failed");
+        let struct_schema = SchemaBuilder::new()
+            .structure(structure_key)
+            .field("name")
+            .done_field()
+            .field("company")
+            .done_field()
+            .done_structure()
+            .build()
+            .expect("failed to build rust structure schema");
+        let struct_raw = engine
+            .extract(structure_text, &struct_schema, structure_threshold, false, false, None)
+            .expect("rust structure failed");
 
+        rust_fixtures.push(serde_json::json!({
+            "id": id,
+            "entities": normalize_entities(&entities_raw),
+            "classification": normalize_classification(&class_raw, "sentiment"),
+            "relations": normalize_relations(&rel_raw),
+            "structures": normalize_structures(&struct_raw, structure_key),
+        }));
+    }
+
+    rust_fixtures.sort_by_key(|v| v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string());
     let rust_norm = serde_json::json!({
-        "entities": normalize_entities(&entities_raw),
-        "classification": normalize_classification(&class_raw, "sentiment"),
-        "relations": normalize_relations(&rel_raw),
-        "structures": normalize_structures(&struct_raw, "product_info"),
+        "fixtures": rust_fixtures
     });
 
     assert_eq!(

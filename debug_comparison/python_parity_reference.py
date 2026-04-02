@@ -112,49 +112,71 @@ def main() -> int:
     snapshot = sys.argv[1]
     model = GLiNER2.from_pretrained(snapshot)
 
-    fixtures = {
-        "entities_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
-        "class_text": "I love this product.",
-        "relations_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
-        "structure_text": "Apple announced iPhone in Cupertino, California.",
-    }
+    fixtures = [
+        {
+            "id": "basic_apple",
+            "entities_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "class_text": "I love this product.",
+            "relations_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "structure_text": "Apple announced iPhone in Cupertino, California.",
+            "structure_key": "product_info",
+            "structure_threshold": 0.0,
+        },
+        {
+            "id": "microsoft_founder",
+            "entities_text": "Microsoft was founded by Bill Gates in Albuquerque.",
+            "class_text": "Microsoft was founded by Bill Gates in Albuquerque.",
+            "relations_text": "Microsoft was founded by Bill Gates in Albuquerque.",
+            "structure_text": "Microsoft was founded by Bill Gates in Albuquerque.",
+            "structure_key": "profile",
+            "structure_threshold": 0.0,
+        },
+    ]
 
-    entities_raw = model.extract_entities(
-        fixtures["entities_text"],
-        ["person", "organization", "location"],
-        include_confidence=False,
-        include_spans=False,
-    )
-    class_raw = model.classify_text(
-        fixtures["class_text"],
-        {"sentiment": ["positive", "negative"]},
-        include_confidence=False,
-    )
-    rel_raw = model.extract_relations(
-        fixtures["relations_text"],
-        ["works_for"],
-        include_confidence=False,
-        include_spans=False,
-    )
-    struct_schema = {
-        "entities": [],
-        "classifications": [],
-        "relations": [],
-        "json_structures": [{"product_info": {"name": "", "company": ""}}],
-    }
-    struct_raw = model.extract(
-        fixtures["structure_text"],
-        struct_schema,
-        include_confidence=False,
-        include_spans=False,
-    )
+    norm_fixtures = []
+    for fixture in fixtures:
+        entities_raw = model.extract_entities(
+            fixture["entities_text"],
+            ["person", "organization", "location"],
+            include_confidence=False,
+            include_spans=False,
+        )
+        class_raw = model.classify_text(
+            fixture["class_text"],
+            {"sentiment": ["positive", "negative"]},
+            include_confidence=False,
+        )
+        rel_raw = model.extract_relations(
+            fixture["relations_text"],
+            ["works_for"],
+            include_confidence=False,
+            include_spans=False,
+        )
+        struct_schema = {
+            "entities": [],
+            "classifications": [],
+            "relations": [],
+            "json_structures": [{fixture["structure_key"]: {"name": "", "company": ""}}],
+        }
+        struct_raw = model.extract(
+            fixture["structure_text"],
+            struct_schema,
+            threshold=fixture.get("structure_threshold", 0.5),
+            include_confidence=False,
+            include_spans=False,
+        )
 
-    result = {
-        "entities": normalize_entities(entities_raw),
-        "classification": normalize_classification(class_raw, "sentiment"),
-        "relations": normalize_relations(rel_raw),
-        "structures": normalize_structures(struct_raw, "product_info"),
-    }
+        norm_fixtures.append(
+            {
+                "id": fixture["id"],
+                "entities": normalize_entities(entities_raw),
+                "classification": normalize_classification(class_raw, "sentiment"),
+                "relations": normalize_relations(rel_raw),
+                "structures": normalize_structures(struct_raw, fixture["structure_key"]),
+            }
+        )
+
+    result = {"fixtures": norm_fixtures}
 
     print("__PARITY_JSON_START__")
     print(json.dumps(result, sort_keys=True))
