@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -17,6 +18,12 @@ from gliner2 import GLiNER2
 
 def _norm_text(v: Any) -> str:
     return str(v).strip().lower()
+
+def _split_structure_chunks(v: Any) -> list[str]:
+    text = _norm_text(v)
+    if not text:
+        return []
+    return re.findall(r"[a-z0-9]+", text)
 
 
 def normalize_entities(result: dict[str, Any]) -> dict[str, list[str]]:
@@ -72,7 +79,7 @@ def normalize_structures(result: dict[str, Any], key: str) -> list[dict[str, Any
                     if isinstance(v, dict):
                         v = v.get("text")
                     if v is not None:
-                        texts.append(_norm_text(v))
+                        texts.extend(_split_structure_chunks(v))
                 norm_inst[field] = sorted(set(texts))
             elif isinstance(value, dict):
                 text = value.get("text")
@@ -129,6 +136,15 @@ def main() -> int:
             "relations_text": "Microsoft was founded by Bill Gates in Albuquerque.",
             "structure_text": "Microsoft was founded by Bill Gates in Albuquerque.",
             "structure_key": "profile",
+            "structure_threshold": 0.0,
+        },
+        {
+            "id": "tesla_engineer",
+            "entities_text": "Tesla engineer Elon Musk works in Austin, Texas.",
+            "class_text": "Tesla engineer Elon Musk works in Austin, Texas.",
+            "relations_text": "Tesla engineer Elon Musk works in Austin, Texas.",
+            "structure_text": "Tesla engineer Elon Musk works in Austin, Texas.",
+            "structure_key": "team_profile",
             "structure_threshold": 0.0,
         },
     ]

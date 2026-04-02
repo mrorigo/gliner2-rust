@@ -26,6 +26,22 @@ fn norm_text(v: &str) -> String {
     v.trim().to_lowercase()
 }
 
+fn split_structure_chunks(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() {
+            cur.push(ch.to_ascii_lowercase());
+        } else if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 fn normalize_entities(result: &JsonValue) -> JsonValue {
     let mut out = serde_json::Map::new();
     let entities = result.get("entities").and_then(|v| v.as_object()).cloned().unwrap_or_default();
@@ -93,9 +109,9 @@ fn normalize_structures(result: &JsonValue, key: &str) -> JsonValue {
                         let mut texts = Vec::<String>::new();
                         for v in a {
                             if let Some(s) = v.as_str() {
-                                texts.push(norm_text(s));
+                                texts.extend(split_structure_chunks(s));
                             } else if let Some(s) = v.get("text").and_then(|x| x.as_str()) {
-                                texts.push(norm_text(s));
+                                texts.extend(split_structure_chunks(s));
                             }
                         }
                         texts.sort();
@@ -204,6 +220,15 @@ fn test_python_reference_parity_fixtures() {
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "profile",
+            0.0f32,
+        ),
+        (
+            "tesla_engineer",
+            "Tesla engineer Elon Musk works in Austin, Texas.",
+            "Tesla engineer Elon Musk works in Austin, Texas.",
+            "Tesla engineer Elon Musk works in Austin, Texas.",
+            "Tesla engineer Elon Musk works in Austin, Texas.",
+            "team_profile",
             0.0f32,
         ),
     ];
