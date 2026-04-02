@@ -185,6 +185,91 @@ fn test_structure_extraction_pipeline() {
     );
 }
 
+/// Test relation-level threshold metadata influences decoding.
+#[test]
+fn test_relation_threshold_metadata_pipeline() {
+    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::schema::builder::SchemaBuilder;
+
+    let config = ExtractorConfig::new("bert-base-uncased");
+    let engine = GLiNER2::new(&config).expect("Failed to create engine");
+
+    // Threshold at 1.0 should suppress all relation spans after sigmoid.
+    let schema = SchemaBuilder::new()
+        .relation("works_for").threshold(1.0).done()
+        .build()
+        .expect("Failed to build relation schema");
+
+    let result = engine.extract(
+        "Apple CEO Tim Cook visited Cupertino.",
+        &schema,
+        0.5,
+        true,
+        true,
+        None,
+    );
+    assert!(result.is_ok(), "Relation extraction failed: {:?}", result.err());
+
+    let result = result.unwrap();
+    let rels = result
+        .get("relation_extraction")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.get("works_for"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    assert!(
+        rels.is_empty(),
+        "Expected empty relation list at threshold=1.0, got: {rels:?}"
+    );
+}
+
+/// Test structure dtype='str' returns a single value (or null), not a list.
+#[test]
+fn test_structure_str_dtype_pipeline() {
+    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::schema::builder::SchemaBuilder;
+    use gliner2_rust::schema::types::FieldDtype;
+
+    let config = ExtractorConfig::new("bert-base-uncased");
+    let engine = GLiNER2::new(&config).expect("Failed to create engine");
+
+    let schema = SchemaBuilder::new()
+        .structure("product_info")
+            .field("name").dtype(FieldDtype::Str).done_field()
+            .field("company").done_field()
+            .done_structure()
+        .build()
+        .expect("Failed to build structure schema");
+
+    let result = engine.extract(
+        "Apple announced iPhone in Cupertino.",
+        &schema,
+        0.0, // encourage at least one extracted instance
+        true,
+        true,
+        None,
+    );
+    assert!(result.is_ok(), "Structure extraction failed: {:?}", result.err());
+
+    let result = result.unwrap();
+    let instances = result
+        .get("product_info")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(first) = instances.first().and_then(|v| v.as_object()) {
+        if let Some(name_val) = first.get("name") {
+            assert!(
+                !name_val.is_array(),
+                "Expected dtype=str field to be scalar/null, got array: {name_val:?}"
+            );
+        }
+    }
+}
+
 /// Test that the tokenizer produces valid token IDs.
 #[test]
 fn test_tokenizer_produces_valid_ids() {
