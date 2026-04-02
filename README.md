@@ -204,14 +204,21 @@ The encoder mismatch suggests one of:
 ## 🏆 Credits
 
 ### Coding Work
-**Qwen 3.6 Plus Preview (free)** — All implementation work including:
-- Complete architecture port from PyTorch to candle
-- Custom DeBERTa V3 encoder implementation
-- All neural network component rewrites matching GLiNER2 architecture
-- Weight loading infrastructure with safetensors support
-- HuggingFace tokenizer integration with Hub download fallback
-- Test suite development and debugging
-- Documentation and README
+This project was developed collaboratively across multiple AI coding sessions.
+
+**Qwen 3.6 Plus Preview (free)** contributed major foundational implementation work, including:
+- Core architecture port from PyTorch/tch to candle
+- Initial DeBERTa/GLiNER2 component implementations
+- Weight loading infrastructure and early end-to-end wiring
+- Early debugging and project scaffolding/tests
+
+**GPT-5.3-Codex** contributed substantial follow-up implementation and debugging work, including:
+- Collator parity fixes for HuggingFace tokenizer IDs and subword index tracking
+- DeBERTa encoder parity improvements (masking, relative position/bias handling, backend alignment)
+- Count-aware scoring pipeline fixes in `count_embed` (GRU/math/shape/transformer behavior)
+- Span representation parity fixes (activation path and projection behavior)
+- Entity extraction/scoring parity fixes (count-slot handling, overlap suppression, calibration debugging)
+- Integration validation with real model tests and cleanup of debug output
 
 ### Guidance & Support
 **The Operator** — Cheering on, guiding decisions, and providing crucial feedback throughout the development process. Your encouragement and direction made this achievement possible.

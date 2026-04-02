@@ -417,9 +417,6 @@ impl Extractor {
             GlinerError::model_loading(format!("Encoder forward pass failed: {e}"))
         })?;
 
-        // Debug: print encoder output shape
-        eprintln!("DEBUG extractor: encoder_output.dims()={:?}", encoder_output.dims());
-
         let batch_size = batch.batch_size();
         let mut schema_embeddings = Vec::with_capacity(batch_size);
 
@@ -444,54 +441,19 @@ impl Extractor {
                 }
                 let special_indices = special_indices.unwrap();
 
-                eprintln!("DEBUG extractor: sample={}, schema={}, schema_tokens={:?}, special_indices={:?}",
-                          sample_idx, schema_idx, schema_tokens, special_indices);
-
                 // Get encoder output for this sample
                 let sample_encoder = encoder_output.narrow(0, sample_idx, 1)
                     .map_err(|e| GlinerError::model_loading(format!("Failed to narrow encoder output: {e}")))?
                     .squeeze(0)
                     .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze encoder output: {e}")))?;
 
-                eprintln!("DEBUG extractor: sample_encoder.dims()={:?}", sample_encoder.dims());
-
-                // Debug: print embeddings at [E] positions to compare with Python
-                // Python output for reference:
-                //   pos[4] = [-0.192, -0.062, 0.064, -0.001, 0.071]
-                //   pos[6] = [-0.197, 0.076, -0.142, -0.097, -0.044]
-                //   pos[8] = [0.037, -0.065, -0.040, -0.075, -0.075]
-                eprintln!("DEBUG extractor: [E] token embeddings (should be DIFFERENT):");
-                for &check_idx in &[4, 6, 8] {
-                    if check_idx < sample_encoder.dims()[0] {
-                        let idx_tensor = Tensor::new(&[check_idx as u32], &self.device)
-                            .map_err(|e| GlinerError::model_loading(format!("Failed to create index tensor: {e}")))?;
-                        let emb = sample_encoder.index_select(&idx_tensor, 0)
-                            .map_err(|e| GlinerError::model_loading(format!("Failed to gather embedding: {e}")))?;
-                        if let Ok(data) = emb.flatten_all() {
-                            if let Ok(vec) = data.to_vec1::<f32>() {
-                                let first_5: Vec<f32> = vec.iter().take(5).cloned().collect();
-                                eprintln!("DEBUG extractor: pos[{}] first 5: {:?}", check_idx, first_5);
-                            }
-                        }
-                    }
-                }
-
                 // Extract embeddings for each schema token using special indices
                 let mut schema_token_embs = Vec::with_capacity(schema_tokens.len());
-                for (emb_idx, &idx) in special_indices.iter().enumerate() {
-                    eprintln!("DEBUG extractor: extracting embedding at index {}", idx);
+                for &idx in special_indices.iter() {
                     let idx_tensor = Tensor::new(&[idx as u32], &self.device)
                         .map_err(|e| GlinerError::model_loading(format!("Failed to create index tensor: {e}")))?;
                     let emb = sample_encoder.index_select(&idx_tensor, 0)
                         .map_err(|e| GlinerError::model_loading(format!("Failed to gather schema embedding: {e}")))?;
-
-                    // Debug: print first few values of each embedding
-                    if let Ok(data) = emb.flatten_all() {
-                        if let Ok(vec) = data.to_vec1::<f32>() {
-                            let first_5: Vec<f32> = vec.iter().take(5).cloned().collect();
-                            eprintln!("DEBUG extractor: emb[{}] first 5: {:?}", emb_idx, first_5);
-                        }
-                    }
 
                     schema_token_embs.push(emb);
                 }

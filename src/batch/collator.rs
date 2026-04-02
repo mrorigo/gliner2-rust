@@ -350,11 +350,6 @@ impl ExtractorCollator {
                     .map(|enc| (enc.get_tokens().to_vec(), enc.get_ids().to_vec()))
                     .unwrap_or_else(|_| (vec![token.clone()], vec![0u32]));
 
-                // Debug: print subwords for schema tokens
-                if seg_type == "schema" {
-                    eprintln!("DEBUG collator: token='{}' -> sub_tokens={:?}, subword_pos_start={}", token, sub_tokens, input_ids.len());
-                }
-
                 let subword_pos_start = input_ids.len();
 
                 for &token_id in &sub_token_ids {
@@ -409,11 +404,6 @@ impl ExtractorCollator {
             // Add final separator
             input_ids.push(self.token_to_id("[SEP]"));
         }
-
-        // Debug: print input IDs for comparison with Python
-        eprintln!("DEBUG collator: input_ids={:?}", input_ids);
-        eprintln!("DEBUG collator: text_word_indices={:?}", text_word_indices);
-        eprintln!("DEBUG collator: schema_special_indices={:?}", schema_special_indices);
 
         Ok(ProcessedSample {
             input_ids,

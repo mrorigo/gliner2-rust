@@ -963,16 +963,7 @@ impl GLiNER2 {
         // Output shape: (pred_count, num_entity_types, hidden)
         let struct_proj = match self.model.count_embed.forward(&entity_embs_tensor, pred_count) {
             Ok(out) => out.embeddings,
-            Err(e) => {
-                eprintln!(
-                    "DEBUG extractor: count_embed.forward failed (pred_count={}, num_entity_types={}, hidden_size={}): {}",
-                    pred_count,
-                    num_entity_types,
-                    hidden_size,
-                    e
-                );
-                return Ok(JsonValue::Object(entities));
-            }
+            Err(_) => return Ok(JsonValue::Object(entities)),
         };
 
         // Get struct_proj as flat data: (pred_count, num_entity_types, hidden)
