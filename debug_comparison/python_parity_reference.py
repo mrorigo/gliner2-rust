@@ -208,62 +208,62 @@ def main() -> int:
         {
             "id": "long_context_maxlen_12",
             "entities_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "class_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "relations_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "structure_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "structure_key": "long_context",
-            "structure_threshold": 0.5,
+            "structure_threshold": 0.0,
             "entity_threshold": 0.5,
             "relation_threshold": 0.5,
             "class_multi_label": False,
             "max_len": 12,
-            "classification_only": True,
+            "classification_only": False,
         },
         {
             "id": "long_context_maxlen_24",
             "entities_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "class_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "relations_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "structure_text": (
-                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "Apple CEO Tim Cook works for Apple while teams discuss roadmap "
                 "and planning details filler filler filler filler filler filler filler filler filler filler "
                 "filler filler filler filler filler filler filler filler filler filler."
             ),
             "structure_key": "long_context",
-            "structure_threshold": 0.5,
+            "structure_threshold": 0.0,
             "entity_threshold": 0.5,
             "relation_threshold": 0.5,
             "class_multi_label": False,
             "max_len": 24,
-            "classification_only": True,
+            "classification_only": False,
         },
     ]
 
