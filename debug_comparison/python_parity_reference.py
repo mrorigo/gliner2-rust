@@ -205,6 +205,66 @@ def main() -> int:
             "class_multi_label": True,
             "classification_only": True,
         },
+        {
+            "id": "long_context_maxlen_12",
+            "entities_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "class_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "relations_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "structure_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "structure_key": "long_context",
+            "structure_threshold": 0.5,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
+            "class_multi_label": False,
+            "max_len": 12,
+            "classification_only": True,
+        },
+        {
+            "id": "long_context_maxlen_24",
+            "entities_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "class_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "relations_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "structure_text": (
+                "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap "
+                "and planning details filler filler filler filler filler filler filler filler filler filler "
+                "filler filler filler filler filler filler filler filler filler filler."
+            ),
+            "structure_key": "long_context",
+            "structure_threshold": 0.5,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
+            "class_multi_label": False,
+            "max_len": 24,
+            "classification_only": True,
+        },
     ]
 
     norm_fixtures = []
@@ -215,6 +275,7 @@ def main() -> int:
             threshold=fixture.get("entity_threshold", 0.5),
             include_confidence=False,
             include_spans=False,
+            max_len=fixture.get("max_len"),
         )
         class_raw = model.classify_text(
             fixture["class_text"],
@@ -225,6 +286,7 @@ def main() -> int:
                 }
             },
             include_confidence=False,
+            max_len=fixture.get("max_len"),
         )
         rel_raw = model.extract_relations(
             fixture["relations_text"],
@@ -232,6 +294,7 @@ def main() -> int:
             threshold=fixture.get("relation_threshold", 0.5),
             include_confidence=False,
             include_spans=False,
+            max_len=fixture.get("max_len"),
         )
         struct_schema = {
             "entities": [],
@@ -245,6 +308,7 @@ def main() -> int:
             threshold=fixture.get("structure_threshold", 0.5),
             include_confidence=False,
             include_spans=False,
+            max_len=fixture.get("max_len"),
         )
 
         if fixture.get("classification_only", False):

@@ -213,6 +213,7 @@ fn test_python_reference_parity_fixtures() {
             "product_info",
             false,
             false,
+            None,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -226,6 +227,7 @@ fn test_python_reference_parity_fixtures() {
             "profile",
             false,
             false,
+            None,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -239,6 +241,7 @@ fn test_python_reference_parity_fixtures() {
             "team_profile",
             false,
             false,
+            None,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -252,6 +255,7 @@ fn test_python_reference_parity_fixtures() {
             "threshold_case",
             false,
             false,
+            None,
             0.49f32,
             0.49f32,
             0.49f32,
@@ -265,6 +269,7 @@ fn test_python_reference_parity_fixtures() {
             "threshold_case",
             false,
             false,
+            None,
             0.50f32,
             0.50f32,
             0.50f32,
@@ -278,6 +283,7 @@ fn test_python_reference_parity_fixtures() {
             "threshold_case",
             false,
             false,
+            None,
             0.51f32,
             0.51f32,
             0.51f32,
@@ -291,6 +297,35 @@ fn test_python_reference_parity_fixtures() {
             "review_profile",
             true,
             true,
+            None,
+            0.5f32,
+            0.5f32,
+            0.5f32,
+        ),
+        (
+            "long_context_maxlen_12",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "long_context",
+            false,
+            true,
+            Some(12usize),
+            0.5f32,
+            0.5f32,
+            0.5f32,
+        ),
+        (
+            "long_context_maxlen_24",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "Apple CEO Tim Cook works for Apple in Cupertino California while teams discuss roadmap and planning details filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler.",
+            "long_context",
+            false,
+            true,
+            Some(24usize),
             0.5f32,
             0.5f32,
             0.5f32,
@@ -307,6 +342,7 @@ fn test_python_reference_parity_fixtures() {
         structure_key,
         class_multi_label,
         classification_only,
+        max_len,
         entity_threshold,
         relation_threshold,
         structure_threshold,
@@ -319,33 +355,63 @@ fn test_python_reference_parity_fixtures() {
                 Some(entity_threshold),
                 false,
                 false,
-                None,
+                max_len,
             )
             .expect("rust entities failed");
-        let class_raw = engine
-            .classify_text(
-                class_text,
-                &[(
+        let class_raw = if max_len.is_none() {
+            engine
+                .classify_text(
+                    class_text,
+                    &[(
+                        "sentiment".to_string(),
+                        vec![
+                            "positive".to_string(),
+                            "negative".to_string(),
+                            "neutral".to_string(),
+                        ],
+                    )],
+                    Some(0.5),
+                    class_multi_label,
+                )
+                .expect("rust classification failed")
+        } else {
+            let mut class_schema_builder = SchemaBuilder::new();
+            class_schema_builder = class_schema_builder
+                .classification(
                     "sentiment".to_string(),
                     vec![
                         "positive".to_string(),
                         "negative".to_string(),
                         "neutral".to_string(),
                     ],
-                )],
-                Some(0.5),
-                class_multi_label,
-            )
-            .expect("rust classification failed");
-        let rel_raw = engine
-            .extract_relations(
-                relations_text,
-                &["works_for"],
-                Some(relation_threshold),
-                false,
-                false,
-            )
-            .expect("rust relation failed");
+                )
+                .multi_label(class_multi_label)
+                .threshold(0.5)
+                .done();
+            let class_schema = class_schema_builder
+                .build()
+                .expect("failed to build rust classification schema");
+            engine
+                .extract(class_text, &class_schema, 0.5, false, false, max_len)
+                .expect("rust classification failed")
+        };
+        let rel_raw = {
+            let relation_schema = SchemaBuilder::new()
+                .relation("works_for")
+                .done()
+                .build()
+                .expect("failed to build rust relation schema");
+            engine
+                .extract(
+                    relations_text,
+                    &relation_schema,
+                    relation_threshold,
+                    false,
+                    false,
+                    max_len,
+                )
+                .expect("rust relation failed")
+        };
         let struct_schema = SchemaBuilder::new()
             .structure(structure_key)
             .field("name")
@@ -356,7 +422,14 @@ fn test_python_reference_parity_fixtures() {
             .build()
             .expect("failed to build rust structure schema");
         let struct_raw = engine
-            .extract(structure_text, &struct_schema, structure_threshold, false, false, None)
+            .extract(
+                structure_text,
+                &struct_schema,
+                structure_threshold,
+                false,
+                false,
+                max_len,
+            )
             .expect("rust structure failed");
 
         let entities_norm = if classification_only {
