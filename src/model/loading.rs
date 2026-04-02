@@ -168,10 +168,14 @@ impl ModelLoader {
         )
         .map_err(|e| GlinerError::model_loading(format!("Failed to rebuild count_pred: {e}")))?;
 
-        // Skip count_embed weight loading - the simplified CountEmbedLayer structure
-        // doesn't match the complex GRU+Transformer architecture in the actual weights.
-        // The layer will use randomly initialized weights for now.
-        // TODO: Implement full CountEmbedLayer with GRU+Transformer to load trained weights
+        // Rebuild count embedding layer with loaded weights
+        model.count_embed = crate::model::count_embed::CountEmbedLayer::from_var_builder(
+            vb.pp("count_embed"),
+            self.config.hidden_size,
+            20,
+            self.device.clone(),
+        )
+        .map_err(|e| GlinerError::model_loading(format!("Failed to rebuild count_embed: {e}")))?;
 
         // Rebuild classifier head with loaded weights
         model.classifier = crate::model::classifier::ClassifierHead::from_var_builder(
