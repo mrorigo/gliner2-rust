@@ -2,40 +2,44 @@
 
 A high-performance, pure Rust implementation of the [GLiNER2](https://github.com/urchade/GLiNER2) information extraction model. This library provides efficient CPU-based inference for entity extraction, text classification, structured data extraction, and relation extraction — with zero external dependencies beyond Cargo.
 
-## 🎯 Current Status: Architecture Complete, Entity Extraction Debugging
+## 🎯 Current Status: Architecture Complete, Encoder Mismatch Under Investigation
 
-**The full GLiNER2 inference pipeline architecture is complete and proven working.** We successfully:
+**The full GLiNER2 inference pipeline architecture is complete.** All components are implemented and weights load successfully:
 - ✅ Load real GLiNER2 model weights from HuggingFace Hub
-- ✅ Run DeBERTa V3 encoder forward pass with trained weights
-- ✅ Process through span representation, classifier, and count prediction layers
-- ✅ Produce valid output structure
+- ✅ Run DeBERTa V3 encoder with disentangled attention (c2p + p2c)
+- ✅ count_embed layer with GRU + Transformer architecture
+- ✅ HF tokenizer integration with correct subword tracking
+- ✅ Schema/text indices tracking matches Python implementation
+- ✅ Entity order preservation matches Python implementation
 
-**Currently debugging:** Entity extraction returns empty results. The model loads and runs, but the schema embedding extraction and span scoring logic needs refinement. The pipeline produces valid output structure but no entities are extracted above threshold.
+**Critical Issue:** Encoder outputs differ completely from Python reference. Rust `[E]@4 = [-0.097, -0.042, -0.007]` vs Python `[E]@4 = [0.023, 1.059, 0.710]`. This causes entity extraction to return empty results. Root cause investigation needed.
 
 ## ✨ What's Working
 
 ### Complete Architecture Port
 - ✅ **Candle ML Framework** — All PyTorch/tch dependencies replaced with `candle-core`, `candle-nn`, and `candle-transformers`
-- ✅ **DeBERTa V3 Encoder** — Custom implementation matching GLiNER2 architecture:
-  - Standard multi-head attention (query_proj/key_proj/value_proj)
-  - Relative position embeddings (rel_embeddings)
+- ✅ **DeBERTa V3 Encoder** — Custom implementation with disentangled attention:
+  - Disentangled multi-head attention with c2p (content-to-position) and p2c (position-to-content) bias
+  - Relative position embeddings with log bucketing
   - No token_type_embeddings (DeBERTa V3 specific)
   - Proper attention mask broadcasting
 - ✅ **GLiNER2 Heads** — All components match the actual Python architecture:
   - **Span Rep**: markerV0 with project_start/end/out_project (Linear+GELU+Linear)
   - **Classifier**: 2-layer MLP (768→1536→1) with ReLU
   - **Count Pred**: 2-layer MLP (768→1536→20) with ReLU
+  - **Count Embed**: Full GRU + Transformer architecture (pos_embedding → GRU → in_projector → 2x Transformer → out_projector)
 - ✅ **Weight Loading** — `VarBuilder::from_mmaped_safetensors()` with correct name mapping
 - ✅ **HuggingFace Tokenizer** — Automatic Hub download with local fallback
 
 ### Real Inference Proven Working
 - ✅ **Real Model Downloads** — Downloads from HuggingFace Hub automatically
-- ✅ **Weight Loading** — Successfully loads all model components
-- ✅ **Full Pipeline Execution** — Tokenization → Collation → Encoding → Extraction → Formatting
+- ✅ **Weight Loading** — Successfully loads all model components including count_embed
+- ✅ **Full Pipeline Execution** — Tokenization → Collation → Encoding → count_embed + einsum scoring → Extraction
 - ✅ **Batch Processing** — Parallel batch inference
 - ✅ **Entity Extraction API** — Full API with confidence scores and span positions
 - ✅ **Text Classification** — Single and multi-label classification
 - ✅ **Relation & Structure Extraction** — Full API support
+- ⚠️ **Encoder Output Mismatch** — Rust encoder produces different outputs than Python reference
 
 ### Test Coverage
 - ✅ **80 Unit Tests** — All passing across all modules
@@ -67,13 +71,13 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 
 | Component | Architecture | Status |
 |-----------|-------------|--------|
-| **Encoder** | DeBERTa-v3-base (128011 vocab, 768 hidden, 12 layers) | ✅ Complete |
+| **Encoder** | DeBERTa-v3-base with disentangled attention (c2p + p2c) | ✅ Complete |
 | **Span Rep** | markerV0: project_start/end/out_project (768→3072→768) | ✅ Complete |
 | **Classifier** | MLP: 768 → 1536 (ReLU) → 1 | ✅ Complete |
 | **Count Pred** | MLP: 768 → 1536 (ReLU) → 20 | ✅ Complete |
-| **Count Embed** | CountLSTMv2 (GRU-based) | ⏳ Pending |
+| **Count Embed** | GRU + Transformer (pos_embed → GRU → 2x Transformer → projectors) | ✅ Complete |
 | **Weight Loading** | VarBuilder with weight name mapping | ✅ Complete |
-| **Entity Extraction** | Span scoring with schema embeddings | 🔧 Debugging |
+| **Entity Extraction** | count_embed + einsum scoring | ⚠️ Encoder mismatch |
 
 ## 📦 Installation
 
@@ -164,29 +168,38 @@ cargo test --test real_inference_test
 - ✅ **4 integration tests** passing with real HuggingFace Hub downloads
 - ⏱️ Tests take ~60-120s each due to model initialization and Hub downloads
 
-## 🎯 What's Next: Debugging Entity Extraction
+## 🔍 Critical Issue: Encoder Output Mismatch
 
-The pipeline architecture is complete and proven working. The final step is debugging why entity extraction returns empty results despite the model loading and running successfully.
+### Problem
+The DeBERTa V3 encoder produces completely different outputs than the Python reference implementation:
 
-### Current Status
-✅ Pipeline works end-to-end with real weights  
-✅ Real tokenizer downloads from HuggingFace Hub  
-✅ Full inference produces valid output structure  
-✅ All component architectures match Python GLiNER2  
-🔧 Entity extraction returns empty results (debugging in progress)
+| Position | Python Output | Rust Output | Match |
+|----------|---------------|-------------|-------|
+| [E]@4 | `[0.023, 1.059, 0.710]` | `[-0.097, -0.042, -0.007]` | ❌ |
+| [E]@6 | `[-0.385, 0.945, 0.419]` | `[-0.069, -0.027, -0.015]` | ❌ |
+| [E]@8 | `[-0.354, 0.652, 0.356]` | `[-0.074, -0.041, -0.012]` | ❌ |
 
-### Debugging Focus
-The entity extraction logic needs refinement in:
-1. **Schema embedding extraction** — Ensuring schema tokens are properly mapped to encoder output positions
-2. **Span scoring** — Computing dot products between span representations and schema embeddings
-3. **Threshold filtering** — Ensuring valid entities are extracted above threshold
+This mismatch causes entity extraction to return empty results despite all components being implemented.
 
-### Path Forward
-1. Debug schema_special_indices tracking in collator
-2. Verify schema embeddings are extracted from correct positions
-3. Validate span scoring computation
-4. Test with lower thresholds to catch entities
-5. Compare with Python implementation output
+### What's Verified Working
+- ✅ **Input IDs match Python**: `[287, 128003, 6967, 287, 128005, 604, ...]`
+- ✅ **Indices match Python**: `schema_special=[[1,4,6,8]]`, `text_word=[13,14,...,29]`
+- ✅ **Entity order matches Python**: `person, organization, location`
+- ✅ **count_embed architecture implemented**: GRU + Transformer with weight loading
+- ✅ **count_embed + einsum scoring implemented**: Proper scoring mechanism
+
+### Root Cause Investigation Needed
+The encoder mismatch suggests one of:
+1. **Weight loading issue** — Weights may not be loading correctly into the DeBERTa V3 layers
+2. **Attention mechanism difference** — Disentangled attention implementation may differ from Python
+3. **Relative position handling** — Log bucketing or position embedding application may differ
+4. **Layer normalization** — Epsilon values or application order may differ
+
+### Next Steps
+1. Compare embedding layer outputs (before transformer layers)
+2. Verify weight shapes and values match between Python and Rust
+3. Check attention mask application and relative position bias computation
+4. Compare intermediate layer outputs to isolate the mismatch
 
 ## 🏆 Credits
 

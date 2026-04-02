@@ -916,6 +916,62 @@ impl GLiNER2 {
         let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
         let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
 
+        // Use count_embed + einsum scoring mechanism (matching Python implementation)
+        // Step 1: Get entity embeddings (skip [P] token at index 0)
+        // entity_type_indices maps to positions in schema_tokens_embs
+        let num_entity_types = entity_types.len();
+        if num_entity_types == 0 || schema_tokens_embs.len() <= 1 {
+            return Ok(JsonValue::Object(entities));
+        }
+
+        let mut entity_emb_data: Vec<f32> = Vec::with_capacity(num_entity_types * hidden_size);
+        for &emb_idx in &entity_type_indices {
+            if emb_idx < schema_tokens_embs.len() {
+                let emb = &schema_tokens_embs[emb_idx];
+                if let Ok(data) = emb.flatten_all() {
+                    if let Ok(vec) = data.to_vec1::<f32>() {
+                        entity_emb_data.extend_from_slice(&vec);
+                    }
+                }
+            } else {
+                // Pad with zeros if embedding not found
+                entity_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+            }
+        }
+
+        // Create entity embeddings tensor: (num_entity_types, hidden)
+        let entity_embs_tensor = match Tensor::from_vec(
+            entity_emb_data,
+            (num_entity_types, hidden_size),
+            &output.device,
+        ) {
+            Ok(t) => t,
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
+
+        // Step 2: Predict count using count_pred layer
+        // Use [P] token embedding (schema_tokens_embs[0]) for count prediction
+        let p_token_emb = &schema_tokens_embs[0];
+        let pred_count = if let Ok(output) = self.model.count_pred.predict_count(p_token_emb) {
+            output.count.min(20).max(1)
+        } else {
+            5
+        };
+        let pred_count = pred_count.min(20).max(1);
+
+        // Step 3: Transform entity embeddings using count_embed
+        // Output shape: (pred_count, num_entity_types, hidden)
+        let struct_proj = match self.model.count_embed.forward(&entity_embs_tensor, pred_count) {
+            Ok(out) => out.embeddings,
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
+
+        // Get struct_proj as flat data: (pred_count, num_entity_types, hidden)
+        let struct_proj_data: Vec<f32> = match struct_proj.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
+
         // Get span mask dimensions
         let span_mask_dims = span_mask.dims();
         if span_mask_dims.len() != 2 {
@@ -930,7 +986,7 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
 
-        // Get span reps as flat data
+        // Get span reps as flat data: (seq_len, max_width, hidden)
         let span_rep_data: Vec<f32> = match span_rep.flatten_all() {
             Ok(t) => t.to_vec1().unwrap_or_default(),
             Err(_) => return Ok(JsonValue::Object(entities)),
@@ -942,55 +998,78 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
 
-        // For each entity type, compute scores and extract entities
+        // Step 4: Compute scores using einsum-like operation
+        // Python: torch.einsum("lkd,bpd->bplk", span_rep, struct_proj)
+        // span_rep: (seq_len, max_width, hidden) -> l, k, d
+        // struct_proj: (pred_count, num_entity_types, hidden) -> b, p, d
+        // Result: (batch=1, pred_count, seq_len, num_entity_types) -> b, p, l, k
+        //
+        // For each span (i, w) and entity type (entity_idx), compute:
+        // score = sum_d(span_rep[i, w, d] * struct_proj[count, entity_idx, d])
+        // Then take max over count positions and apply sigmoid
+
+        // Precompute scores for all spans and entity types
+        // scores[span_idx][entity_idx] = max over count of sigmoid(score)
+        let total_spans = mask_seq_len * mask_max_width;
+        let mut span_entity_scores: Vec<Vec<f32>> = vec![vec![0.0f32; num_entity_types]; total_spans];
+
+        for i in 0..mask_seq_len {
+            for w in 0..mask_max_width {
+                let mask_idx = i * mask_max_width + w;
+                if mask_idx >= mask_data.len() || mask_data[mask_idx] == 0 {
+                    continue; // Invalid span
+                }
+
+                // Get span representation: (hidden,)
+                let span_start = i * max_width * hidden_size + w * hidden_size;
+                if span_start + hidden_size > span_rep_data.len() {
+                    continue;
+                }
+                let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
+
+                // Compute scores for each entity type
+                for entity_idx in 0..num_entity_types {
+                    let mut max_score = f32::NEG_INFINITY;
+
+                    // Max over predicted count positions
+                    for count_idx in 0..pred_count {
+                        // Get struct_proj[count_idx, entity_idx, :]
+                        let struct_start = count_idx * num_entity_types * hidden_size + entity_idx * hidden_size;
+                        if struct_start + hidden_size > struct_proj_data.len() {
+                            continue;
+                        }
+                        let struct_vec = &struct_proj_data[struct_start..struct_start + hidden_size];
+
+                        // Compute dot product
+                        let score: f32 = span_rep_vec.iter()
+                            .zip(struct_vec.iter())
+                            .map(|(a, b)| a * b)
+                            .sum();
+
+                        if score > max_score {
+                            max_score = score;
+                        }
+                    }
+
+                    // Apply sigmoid
+                    let prob = 1.0 / (1.0 + (-max_score).exp());
+                    span_entity_scores[mask_idx][entity_idx] = prob;
+                }
+            }
+        }
+
+        // Step 5: Extract entities for each entity type
         for (entity_idx, entity_type) in entity_types.iter().enumerate() {
             let mut found_entities: Vec<JsonValue> = Vec::new();
 
-            // Get schema embedding for this entity type
-            let schema_emb_idx = entity_type_indices[entity_idx];
-            if schema_emb_idx >= schema_tokens_embs.len() {
-                continue;
-            }
-            let schema_emb = &schema_tokens_embs[schema_emb_idx];
-
-            // Get schema embedding as vector
-            let schema_emb_data: Vec<f32> = match schema_emb.flatten_all() {
-                Ok(t) => t.to_vec1().unwrap_or_default(),
-                Err(_) => continue,
-            };
-
-            if schema_emb_data.len() != hidden_size {
-                continue;
-            }
-
-            // Compute scores for each span using dot product with temperature scaling
             for i in 0..mask_seq_len {
                 for w in 0..mask_max_width {
                     let mask_idx = i * mask_max_width + w;
                     if mask_idx >= mask_data.len() || mask_data[mask_idx] == 0 {
-                        continue; // Invalid span
-                    }
-
-                    // Get span representation
-                    let span_start = i * max_width * hidden_size + w * hidden_size;
-                    if span_start + hidden_size > span_rep_data.len() {
                         continue;
                     }
-                    let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
 
-                    // Compute dot product with schema embedding
-                    let raw_score: f32 = span_rep_vec.iter()
-                        .zip(schema_emb_data.iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-
-                    // Apply temperature scaling: divide by sqrt(hidden_size)
-                    let temperature = (hidden_size as f32).sqrt();
-                    let score = raw_score / temperature;
-
-                    // Apply sigmoid
-                    let prob = 1.0 / (1.0 + (-score).exp());
-
+                    let prob = span_entity_scores[mask_idx][entity_idx];
                     if prob >= threshold {
                         // Get span boundaries
                         let spans_flat_idx = i * max_width * 2 + w * 2;
