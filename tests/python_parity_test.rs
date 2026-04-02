@@ -137,11 +137,11 @@ fn normalize_structures(result: &JsonValue, key: &str) -> JsonValue {
 fn normalize_classification(result: &JsonValue, task: &str) -> JsonValue {
     let v = result.get(task).cloned().unwrap_or(JsonValue::Null);
     if let Some(s) = v.as_str() {
-        return JsonValue::String(norm_text(s));
+        return JsonValue::Array(vec![JsonValue::String(norm_text(s))]);
     }
     if let Some(obj) = v.as_object() {
         if let Some(lbl) = obj.get("label").and_then(|x| x.as_str()) {
-            return JsonValue::String(norm_text(lbl));
+            return JsonValue::Array(vec![JsonValue::String(norm_text(lbl))]);
         }
     }
     if let Some(arr) = v.as_array() {
@@ -157,7 +157,7 @@ fn normalize_classification(result: &JsonValue, task: &str) -> JsonValue {
         labels.dedup();
         return JsonValue::Array(labels.into_iter().map(JsonValue::String).collect());
     }
-    JsonValue::Null
+    JsonValue::Array(Vec::new())
 }
 
 #[test]
@@ -211,6 +211,8 @@ fn test_python_reference_parity_fixtures() {
             "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
             "Apple announced iPhone in Cupertino, California.",
             "product_info",
+            false,
+            false,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -222,6 +224,8 @@ fn test_python_reference_parity_fixtures() {
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "profile",
+            false,
+            false,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -233,6 +237,8 @@ fn test_python_reference_parity_fixtures() {
             "Tesla engineer Elon Musk works in Austin, Texas.",
             "Tesla engineer Elon Musk works in Austin, Texas.",
             "team_profile",
+            false,
+            false,
             0.5f32,
             0.5f32,
             0.0f32,
@@ -244,6 +250,8 @@ fn test_python_reference_parity_fixtures() {
             "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
             "Apple announced iPhone in Cupertino, California.",
             "threshold_case",
+            false,
+            false,
             0.49f32,
             0.49f32,
             0.49f32,
@@ -255,6 +263,8 @@ fn test_python_reference_parity_fixtures() {
             "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
             "Apple announced iPhone in Cupertino, California.",
             "threshold_case",
+            false,
+            false,
             0.50f32,
             0.50f32,
             0.50f32,
@@ -266,9 +276,24 @@ fn test_python_reference_parity_fixtures() {
             "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
             "Apple announced iPhone in Cupertino, California.",
             "threshold_case",
+            false,
+            false,
             0.51f32,
             0.51f32,
             0.51f32,
+        ),
+        (
+            "multilabel_mixed_signal",
+            "The app is polished but expensive and occasionally crashes.",
+            "The app is polished but expensive and occasionally crashes.",
+            "The app is polished but expensive and occasionally crashes.",
+            "The app is polished but expensive and occasionally crashes.",
+            "review_profile",
+            true,
+            true,
+            0.5f32,
+            0.5f32,
+            0.5f32,
         ),
     ];
 
@@ -280,6 +305,8 @@ fn test_python_reference_parity_fixtures() {
         relations_text,
         structure_text,
         structure_key,
+        class_multi_label,
+        classification_only,
         entity_threshold,
         relation_threshold,
         structure_threshold,
@@ -298,9 +325,16 @@ fn test_python_reference_parity_fixtures() {
         let class_raw = engine
             .classify_text(
                 class_text,
-                &[("sentiment".to_string(), vec!["positive".to_string(), "negative".to_string()])],
+                &[(
+                    "sentiment".to_string(),
+                    vec![
+                        "positive".to_string(),
+                        "negative".to_string(),
+                        "neutral".to_string(),
+                    ],
+                )],
                 Some(0.5),
-                false,
+                class_multi_label,
             )
             .expect("rust classification failed");
         let rel_raw = engine
@@ -325,12 +359,28 @@ fn test_python_reference_parity_fixtures() {
             .extract(structure_text, &struct_schema, structure_threshold, false, false, None)
             .expect("rust structure failed");
 
+        let entities_norm = if classification_only {
+            serde_json::json!({"person": [], "organization": [], "location": []})
+        } else {
+            normalize_entities(&entities_raw)
+        };
+        let relations_norm = if classification_only {
+            serde_json::json!({"works_for": []})
+        } else {
+            normalize_relations(&rel_raw)
+        };
+        let structures_norm = if classification_only {
+            JsonValue::Array(Vec::new())
+        } else {
+            normalize_structures(&struct_raw, structure_key)
+        };
+
         rust_fixtures.push(serde_json::json!({
             "id": id,
-            "entities": normalize_entities(&entities_raw),
+            "entities": entities_norm,
             "classification": normalize_classification(&class_raw, "sentiment"),
-            "relations": normalize_relations(&rel_raw),
-            "structures": normalize_structures(&struct_raw, structure_key),
+            "relations": relations_norm,
+            "structures": structures_norm,
         }));
     }
 

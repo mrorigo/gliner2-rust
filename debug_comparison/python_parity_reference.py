@@ -96,10 +96,10 @@ def normalize_structures(result: dict[str, Any], key: str) -> list[dict[str, Any
 def normalize_classification(result: dict[str, Any], task: str) -> Any:
     value = result.get(task)
     if isinstance(value, str):
-        return _norm_text(value)
+        return [_norm_text(value)]
     if isinstance(value, dict):
         label = value.get("label")
-        return _norm_text(label) if label is not None else None
+        return [_norm_text(label)] if label is not None else []
     if isinstance(value, list):
         labels = []
         for item in value:
@@ -108,7 +108,7 @@ def normalize_classification(result: dict[str, Any], task: str) -> Any:
             if item is not None:
                 labels.append(_norm_text(item))
         return sorted(set(labels))
-    return None
+    return []
 
 
 def main() -> int:
@@ -130,6 +130,7 @@ def main() -> int:
             "structure_threshold": 0.0,
             "entity_threshold": 0.5,
             "relation_threshold": 0.5,
+            "class_multi_label": False,
         },
         {
             "id": "microsoft_founder",
@@ -141,6 +142,7 @@ def main() -> int:
             "structure_threshold": 0.0,
             "entity_threshold": 0.5,
             "relation_threshold": 0.5,
+            "class_multi_label": False,
         },
         {
             "id": "tesla_engineer",
@@ -152,6 +154,7 @@ def main() -> int:
             "structure_threshold": 0.0,
             "entity_threshold": 0.5,
             "relation_threshold": 0.5,
+            "class_multi_label": False,
         },
         {
             "id": "threshold_edge_049",
@@ -163,6 +166,7 @@ def main() -> int:
             "structure_threshold": 0.49,
             "entity_threshold": 0.49,
             "relation_threshold": 0.49,
+            "class_multi_label": False,
         },
         {
             "id": "threshold_edge_050",
@@ -174,6 +178,7 @@ def main() -> int:
             "structure_threshold": 0.50,
             "entity_threshold": 0.50,
             "relation_threshold": 0.50,
+            "class_multi_label": False,
         },
         {
             "id": "threshold_edge_051",
@@ -185,6 +190,20 @@ def main() -> int:
             "structure_threshold": 0.51,
             "entity_threshold": 0.51,
             "relation_threshold": 0.51,
+            "class_multi_label": False,
+        },
+        {
+            "id": "multilabel_mixed_signal",
+            "entities_text": "The app is polished but expensive and occasionally crashes.",
+            "class_text": "The app is polished but expensive and occasionally crashes.",
+            "relations_text": "The app is polished but expensive and occasionally crashes.",
+            "structure_text": "The app is polished but expensive and occasionally crashes.",
+            "structure_key": "review_profile",
+            "structure_threshold": 0.5,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
+            "class_multi_label": True,
+            "classification_only": True,
         },
     ]
 
@@ -199,7 +218,12 @@ def main() -> int:
         )
         class_raw = model.classify_text(
             fixture["class_text"],
-            {"sentiment": ["positive", "negative"]},
+            {
+                "sentiment": {
+                    "labels": ["positive", "negative", "neutral"],
+                    "multi_label": fixture.get("class_multi_label", False),
+                }
+            },
             include_confidence=False,
         )
         rel_raw = model.extract_relations(
@@ -223,16 +247,26 @@ def main() -> int:
             include_spans=False,
         )
 
+        if fixture.get("classification_only", False):
+            entities_norm = {"person": [], "organization": [], "location": []}
+            relations_norm = {"works_for": []}
+            structures_norm = []
+        else:
+            entities_norm = normalize_entities(entities_raw)
+            relations_norm = normalize_relations(rel_raw)
+            structures_norm = normalize_structures(struct_raw, fixture["structure_key"])
+
         norm_fixtures.append(
             {
                 "id": fixture["id"],
-                "entities": normalize_entities(entities_raw),
+                "entities": entities_norm,
                 "classification": normalize_classification(class_raw, "sentiment"),
-                "relations": normalize_relations(rel_raw),
-                "structures": normalize_structures(struct_raw, fixture["structure_key"]),
+                "relations": relations_norm,
+                "structures": structures_norm,
             }
         )
 
+    norm_fixtures.sort(key=lambda x: x.get("id", ""))
     result = {"fixtures": norm_fixtures}
 
     print("__PARITY_JSON_START__")
