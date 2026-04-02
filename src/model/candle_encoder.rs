@@ -34,7 +34,6 @@ use std::path::Path;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::{bert, debertav2};
-use crate::model::deberta_v3::{DebertaV3Model, DebertaV3Config};
 
 use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
@@ -130,7 +129,6 @@ pub struct CandleEncoder {
 enum EncoderModel {
     Bert(bert::BertModel),
     DebertaV2(debertav2::DebertaV2Model),
-    DebertaV3(DebertaV3Model),
 }
 
 impl CandleEncoder {
@@ -281,12 +279,13 @@ impl CandleEncoder {
             }
             EncoderType::DebertaV3 => {
                 let deberta_config = Self::build_deberta_v3_config(config);
-                let model = DebertaV3Model::load(vb, &deberta_config).map_err(|e| {
-                    GlinerError::model_loading(format!(
-                        "Failed to load DeBERTa V3 model: {e}"
-                    ))
-                })?;
-                Ok(EncoderModel::DebertaV3(model))
+                let model =
+                    debertav2::DebertaV2Model::load(vb, &deberta_config).map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to load DeBERTa V3-compatible DeBERTa V2 model: {e}"
+                        ))
+                    })?;
+                Ok(EncoderModel::DebertaV2(model))
             }
         }
     }
@@ -313,14 +312,9 @@ impl CandleEncoder {
                     GlinerError::model_loading(format!("BERT forward pass failed: {e}"))
                 }),
             EncoderModel::DebertaV2(model) => model
-                .forward(input_ids, Some(token_type_ids), Some(attention_mask.clone()))
+                .forward(input_ids, None, Some(attention_mask.clone()))
                 .map_err(|e| {
                     GlinerError::model_loading(format!("DeBERTa V2 forward pass failed: {e}"))
-                }),
-            EncoderModel::DebertaV3(model) => model
-                .forward(input_ids, &token_type_ids, Some(attention_mask))
-                .map_err(|e| {
-                    GlinerError::model_loading(format!("DeBERTa V3 forward pass failed: {e}"))
                 }),
         }
     }
@@ -365,7 +359,6 @@ impl CandleEncoder {
         let encoder_type = match &self.model {
             EncoderModel::Bert(_) => EncoderType::Bert,
             EncoderModel::DebertaV2(_) => EncoderType::DebertaV2,
-            EncoderModel::DebertaV3(_) => EncoderType::DebertaV3,
         };
 
         // Rebuild config from current state
@@ -403,22 +396,39 @@ impl CandleEncoder {
     }
 
     /// Build a DeBERTa V3 config from the extractor config.
-    fn build_deberta_v3_config(config: &ExtractorConfig) -> DebertaV3Config {
-        DebertaV3Config {
+    fn build_deberta_v3_config(config: &ExtractorConfig) -> debertav2::Config {
+        debertav2::Config {
             vocab_size: config.vocab_size,
             hidden_size: config.hidden_size,
             num_hidden_layers: config.num_hidden_layers,
             num_attention_heads: config.num_attention_heads,
             intermediate_size: config.intermediate_size,
+            hidden_act: Self::map_deberta_act(config.hidden_act),
             hidden_dropout_prob: config.hidden_dropout_prob as f64,
+            attention_probs_dropout_prob: config.attention_probs_dropout_prob as f64,
             max_position_embeddings: config.max_position_embeddings,
-            layer_norm_eps: config.layer_norm_eps as f64,
-            pad_token_id: config.pad_token_id,
-            max_relative_positions: -1,
-            pos_att_type: vec!["p2c".to_string(), "c2p".to_string()],
-            position_buckets: 256,
-            share_att_key: true,
+            type_vocab_size: 0,
+            initializer_range: 0.02,
+            layer_norm_eps: 1e-7,
             relative_attention: true,
+            max_relative_positions: 512,
+            pad_token_id: Some(config.pad_token_id),
+            position_biased_input: false,
+            pos_att_type: vec!["p2c".to_string(), "c2p".to_string()],
+            position_buckets: Some(256),
+            share_att_key: Some(true),
+            attention_head_size: None,
+            embedding_size: None,
+            norm_rel_ebd: None,
+            conv_kernel_size: None,
+            conv_groups: None,
+            conv_act: None,
+            id2label: None,
+            label2id: None,
+            pooler_dropout: None,
+            pooler_hidden_act: None,
+            pooler_hidden_size: None,
+            cls_dropout: None,
         }
     }
 

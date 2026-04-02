@@ -963,7 +963,16 @@ impl GLiNER2 {
         // Output shape: (pred_count, num_entity_types, hidden)
         let struct_proj = match self.model.count_embed.forward(&entity_embs_tensor, pred_count) {
             Ok(out) => out.embeddings,
-            Err(_) => return Ok(JsonValue::Object(entities)),
+            Err(e) => {
+                eprintln!(
+                    "DEBUG extractor: count_embed.forward failed (pred_count={}, num_entity_types={}, hidden_size={}): {}",
+                    pred_count,
+                    num_entity_types,
+                    hidden_size,
+                    e
+                );
+                return Ok(JsonValue::Object(entities));
+            }
         };
 
         // Get struct_proj as flat data: (pred_count, num_entity_types, hidden)
@@ -1027,32 +1036,25 @@ impl GLiNER2 {
                 }
                 let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
 
-                // Compute scores for each entity type
+                // Compute scores for each entity type.
+                // Match Python entities path: use count index 0 (no max-over-count aggregation).
                 for entity_idx in 0..num_entity_types {
-                    let mut max_score = f32::NEG_INFINITY;
-
-                    // Max over predicted count positions
-                    for count_idx in 0..pred_count {
-                        // Get struct_proj[count_idx, entity_idx, :]
-                        let struct_start = count_idx * num_entity_types * hidden_size + entity_idx * hidden_size;
-                        if struct_start + hidden_size > struct_proj_data.len() {
-                            continue;
-                        }
-                        let struct_vec = &struct_proj_data[struct_start..struct_start + hidden_size];
-
-                        // Compute dot product
-                        let score: f32 = span_rep_vec.iter()
-                            .zip(struct_vec.iter())
-                            .map(|(a, b)| a * b)
-                            .sum();
-
-                        if score > max_score {
-                            max_score = score;
-                        }
+                    // Get struct_proj[0, entity_idx, :]
+                    let struct_start = entity_idx * hidden_size;
+                    if struct_start + hidden_size > struct_proj_data.len() {
+                        continue;
                     }
+                    let struct_vec = &struct_proj_data[struct_start..struct_start + hidden_size];
+
+                    // Compute dot product
+                    let score: f32 = span_rep_vec
+                        .iter()
+                        .zip(struct_vec.iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
 
                     // Apply sigmoid
-                    let prob = 1.0 / (1.0 + (-max_score).exp());
+                    let prob = 1.0 / (1.0 + (-score).exp());
                     span_entity_scores[mask_idx][entity_idx] = prob;
                 }
             }
@@ -1116,7 +1118,32 @@ impl GLiNER2 {
                 conf_b.partial_cmp(&conf_a).unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            entities.insert(entity_type.clone(), JsonValue::Array(found_entities));
+            // Suppress overlapping spans (match Python _format_spans behavior)
+            let mut selected_entities: Vec<JsonValue> = Vec::new();
+            for candidate in found_entities.into_iter() {
+                let c_start = candidate.get("start").and_then(|v| v.as_u64());
+                let c_end = candidate.get("end").and_then(|v| v.as_u64());
+
+                let has_overlap = if let (Some(c_start), Some(c_end)) = (c_start, c_end) {
+                    selected_entities.iter().any(|selected| {
+                        let s_start = selected.get("start").and_then(|v| v.as_u64());
+                        let s_end = selected.get("end").and_then(|v| v.as_u64());
+                        if let (Some(s_start), Some(s_end)) = (s_start, s_end) {
+                            !(c_end <= s_start || c_start >= s_end)
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                };
+
+                if !has_overlap {
+                    selected_entities.push(candidate);
+                }
+            }
+
+            entities.insert(entity_type.clone(), JsonValue::Array(selected_entities));
         }
 
         Ok(JsonValue::Object(entities))

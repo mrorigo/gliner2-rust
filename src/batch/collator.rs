@@ -343,10 +343,12 @@ impl ExtractorCollator {
                     found_sep = true;
                 }
 
-                // Tokenize this token into subwords
-                let sub_tokens = hf_tok.encode(token.as_str(), false)
-                    .map(|enc| enc.get_tokens().to_vec())
-                    .unwrap_or_else(|_| vec![token.clone()]);
+                // Tokenize this token into subwords and use the produced IDs directly.
+                // This preserves tokenizer context (e.g. continuation pieces like "er", "tino").
+                let (sub_tokens, sub_token_ids): (Vec<String>, Vec<u32>) = hf_tok
+                    .encode(token.as_str(), false)
+                    .map(|enc| (enc.get_tokens().to_vec(), enc.get_ids().to_vec()))
+                    .unwrap_or_else(|_| (vec![token.clone()], vec![0u32]));
 
                 // Debug: print subwords for schema tokens
                 if seg_type == "schema" {
@@ -355,15 +357,8 @@ impl ExtractorCollator {
 
                 let subword_pos_start = input_ids.len();
 
-                for sub_token in &sub_tokens {
-                    // Convert subword to token ID
-                    let token_id = hf_tok.encode(sub_token.as_str(), false)
-                        .map(|enc| {
-                            let ids = enc.get_ids();
-                            if ids.is_empty() { 0i64 } else { ids[0] as i64 }
-                        })
-                        .unwrap_or(0);
-                    input_ids.push(token_id);
+                for &token_id in &sub_token_ids {
+                    input_ids.push(token_id as i64);
                 }
 
                 // Track routing indices (matching Python logic)

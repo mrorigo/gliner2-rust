@@ -6,7 +6,7 @@
 //! - Relative position embeddings (rel_embeddings)
 //! - No token_type_embeddings
 
-use candle_core::{DType, Device, Result, Tensor};
+use candle_core::{DType, Device, Result, Tensor, D};
 use candle_nn::{Embedding, LayerNorm, Linear, Module, VarBuilder};
 
 #[derive(Clone)]
@@ -245,8 +245,9 @@ impl DebertaV3Attention {
 
         // Gather using relative positions
         let att_span = rel_embeddings.dims()[0] / 2;
-        let att_span_tensor = Tensor::full(att_span as f32, relative_pos.dims(), relative_pos.device())?;
-        let shifted_pos = relative_pos.add(&att_span_tensor)?;
+        let relative_pos_f = relative_pos.to_dtype(DType::F32)?;
+        let att_span_tensor = Tensor::full(att_span as f32, relative_pos_f.dims(), relative_pos_f.device())?;
+        let shifted_pos = relative_pos_f.add(&att_span_tensor)?;
         let max_val = (att_span * 2 - 1) as f32;
         let shifted_pos = shifted_pos.clamp(0.0, max_val)?;
 
@@ -287,15 +288,17 @@ impl DebertaV3Attention {
 
         // For p2c, we need to gather with negated relative positions
         let att_span = rel_embeddings.dims()[0] / 2;
-        let neg_one = Tensor::full(-1.0f32, relative_pos.dims(), relative_pos.device())?;
-        let neg_rel_pos = relative_pos.mul(&neg_one)?;
-        let att_span_tensor = Tensor::full(att_span as f32, relative_pos.dims(), relative_pos.device())?;
+        let relative_pos_f = relative_pos.to_dtype(DType::F32)?;
+        let neg_one = Tensor::full(-1.0f32, relative_pos_f.dims(), relative_pos_f.device())?;
+        let neg_rel_pos = relative_pos_f.mul(&neg_one)?;
+        let att_span_tensor = Tensor::full(att_span as f32, relative_pos_f.dims(), relative_pos_f.device())?;
         let shifted_pos = neg_rel_pos.add(&att_span_tensor)?;
         let max_val = (att_span * 2 - 1) as f32;
         let shifted_pos = shifted_pos.clamp(0.0, max_val)?;
 
-        // Gather along last dim
+        // Gather along last dim, then transpose last two dims to match HF/candle p2c path
         let gathered = gather_along_last_dim(&p2c_att, &shifted_pos)?;
+        let gathered = gathered.transpose(2, 3)?;
 
         Ok((gathered / scale)?)
     }
@@ -428,22 +431,38 @@ impl DebertaV3Model {
             None => input_ids.ones_like()?,
         };
 
-        // Create extended attention mask for multi-head attention
+        // Create pairwise extended attention mask (matching HF DeBERTa logic)
         // Input: (batch, seq_len) with 1s for valid tokens, 0s for padding
-        // Output: (batch, heads, seq_len, seq_len) for broadcasting with (batch, heads, seq, seq)
+        // Pairwise mask: (batch, 1, seq_len, seq_len), then broadcast to heads
         let attention_mask = match attention_mask.rank() {
             2 => {
-                // (batch, seq) -> (batch, 1, 1, seq) -> broadcast to (batch, heads, seq, seq)
-                let mask = attention_mask.unsqueeze(1)?.unsqueeze(1)?;
-                let seq_len = mask.dims()[3];
-                let num_heads = self.encoder.num_attention_heads;
+                // (batch, seq) -> (batch, 1, 1, seq)
+                let extended_attention_mask = attention_mask.unsqueeze(1)?.unsqueeze(2)?;
+                // Pairwise validity: valid query AND valid key
+                let pairwise_attention_mask = extended_attention_mask.broadcast_mul(
+                    &extended_attention_mask.squeeze(2)?.unsqueeze(3)?,
+                )?;
                 // Broadcast to (batch, heads, seq, seq)
-                mask.broadcast_as((mask.dims()[0], num_heads, seq_len, seq_len))?
+                pairwise_attention_mask.broadcast_as((
+                    pairwise_attention_mask.dims()[0],
+                    self.encoder.num_attention_heads,
+                    pairwise_attention_mask.dims()[2],
+                    pairwise_attention_mask.dims()[3],
+                ))?
+            }
+            3 => {
+                let mask = attention_mask.unsqueeze(1)?;
+                mask.broadcast_as((
+                    mask.dims()[0],
+                    self.encoder.num_attention_heads,
+                    mask.dims()[2],
+                    mask.dims()[3],
+                ))?
             }
             _ => candle_core::bail!("Wrong shape for attention_mask"),
         };
         let attention_mask = attention_mask.to_dtype(DType::F32)?;
-        // Invert mask: 0 for valid, -inf for padding
+        // Convert binary mask to additive mask: 0 for valid, very negative for invalid
         let attention_mask = (attention_mask.ones_like()? - &attention_mask)?
             .broadcast_mul(&Tensor::try_from(f32::MIN)?.to_device(attention_mask.device())?)?;
 
@@ -454,8 +473,8 @@ impl DebertaV3Model {
     pub fn device(&self) -> &Device { &self.device }
 }
 
-/// Build relative position matrix: rel_pos[i,j] = i - j
-/// Returns tensor of shape (1, query_size, key_size)
+/// Build relative position matrix (aligned with HF/candle DeBERTa implementation).
+/// Returns tensor of shape (1, query_size, key_size), dtype i64.
 fn build_relative_position(
     query_size: usize,
     key_size: usize,
@@ -463,64 +482,71 @@ fn build_relative_position(
     max_relative_positions: isize,
     device: &Device,
 ) -> Result<Tensor> {
-    // Create position indices
-    let q_ids: Vec<f32> = (0..query_size).map(|i| i as f32).collect();
-    let k_ids: Vec<f32> = (0..key_size).map(|i| i as f32).collect();
+    // Match candle-transformers/debertav2:
+    // q_ids: (1, query), k_ids: (key, 1), rel_pos = k - q
+    let q_ids = Tensor::arange(0i64, query_size as i64, device)?.unsqueeze(0)?;
+    let k_ids = Tensor::arange(0i64, key_size as i64, device)?.unsqueeze(1)?;
+    let mut rel_pos = k_ids.broadcast_sub(&q_ids)?;
 
-    let q_tensor = Tensor::from_slice(&q_ids, (query_size,), device)?;
-    let k_tensor = Tensor::from_slice(&k_ids, (key_size,), device)?;
-
-    // rel_pos[i,j] = q_ids[i] - k_ids[j]
-    let q_expanded = q_tensor.reshape((query_size, 1))?;
-    let k_expanded = k_tensor.reshape((1, key_size))?;
-    let rel_pos = q_expanded.broadcast_sub(&k_expanded)?;
-
-    // Apply bucketing if configured
     if position_buckets > 0 && max_relative_positions > 0 {
-        return make_log_bucket_position(&rel_pos, position_buckets, max_relative_positions as usize)?
-            .reshape((1, query_size, key_size));
+        rel_pos = make_log_bucket_position(
+            &rel_pos,
+            position_buckets,
+            max_relative_positions as usize,
+        )?;
     }
 
-    rel_pos.reshape((1, query_size, key_size))
+    rel_pos = rel_pos.to_dtype(DType::I64)?;
+    rel_pos = rel_pos.narrow(0, 0, query_size)?;
+    rel_pos.unsqueeze(0)
 }
 
-/// Apply log bucketing to relative positions
+/// Apply log bucketing to relative positions (aligned with HF/candle DeBERTa).
 fn make_log_bucket_position(
     rel_pos: &Tensor,
     bucket_size: usize,
     max_position: usize,
 ) -> Result<Tensor> {
-    let bucket_size_f = bucket_size as f32;
-    let max_position_f = max_position as f32;
+    let sign = rel_pos.to_dtype(DType::F32)?.sign()?;
+    let mid = (bucket_size / 2) as i64;
 
-    let abs_rel_pos = rel_pos.abs()?;
+    let lt_mid = rel_pos.lt(mid)?;
+    let gt_neg_mid = rel_pos.gt(-mid)?;
+    let condition = lt_mid
+        .to_dtype(DType::F32)?
+        .mul(&gt_neg_mid.to_dtype(DType::F32)?)?
+        .to_dtype(DType::U8)?;
 
-    // Compute sign: 1.0 if >= 0, -1.0 if < 0
-    let zero = Tensor::zeros(rel_pos.dims(), DType::F32, rel_pos.device())?;
-    let sign = rel_pos.ge(&zero)?.to_dtype(DType::F32)?;
-    let two = Tensor::full(2.0f32, rel_pos.dims(), rel_pos.device())?;
-    let one = Tensor::ones(rel_pos.dims(), DType::F32, rel_pos.device())?;
-    let sign = sign.mul(&two)?.sub(&one)?;
+    let on_true = Tensor::new(&[(mid - 1) as u32], rel_pos.device())?
+        .broadcast_as(rel_pos.dims())?
+        .to_dtype(rel_pos.dtype())?;
+    let on_false = rel_pos.to_dtype(DType::F32)?.abs()?.to_dtype(DType::I64)?;
+    let abs_pos = condition.where_cond(&on_true, &on_false)?;
 
-    // For positions within bucket_size, keep as-is
-    // For larger positions, apply log bucketing
-    let clamped = abs_rel_pos.maximum(&one)?.minimum(&Tensor::full(max_position_f, rel_pos.dims(), rel_pos.device())?)?;
+    let mid_f = mid as f32;
+    let mid_tensor = Tensor::from_slice(&[mid_f], (1,), rel_pos.device())?;
 
-    // log2(x) = ln(x) / ln(2)
-    let ln2 = (2.0f32).ln();
-    let log_clamped = clamped.log()?;
-    let log_bucket_size = bucket_size_f.ln();
-    let ln2_tensor = Tensor::full(ln2, rel_pos.dims(), rel_pos.device())?;
-    let log_bucket = log_clamped.sub(&Tensor::full(log_bucket_size, rel_pos.dims(), rel_pos.device())?)?.div(&ln2_tensor)?.floor()?;
-    let bucketed = (Tensor::full(bucket_size_f, rel_pos.dims(), rel_pos.device())?.add(&log_bucket)?)
-        .clamp(0.0, (bucket_size * 2 - 1) as f32)?;
+    let first_log = abs_pos
+        .to_dtype(DType::F32)?
+        .broadcast_div(&mid_tensor)?
+        .log()?;
+    let second_log = Tensor::from_slice(
+        &[((max_position as f32 - 1.0) / mid_f)],
+        (1,),
+        rel_pos.device(),
+    )?
+    .log()?;
+    let first_div_second = first_log.broadcast_div(&second_log)?;
+    let to_ceil = first_div_second.broadcast_mul(
+        Tensor::from_slice(&[(mid_f - 1.0)], (1,), rel_pos.device())?.as_ref(),
+    )?;
+    let ceil = to_ceil.ceil()?;
+    let log_pos = ceil.broadcast_add(&mid_tensor)?;
 
-    // Use original values for small positions, bucketed for large
-    let bucket_size_tensor = Tensor::full(bucket_size_f, rel_pos.dims(), rel_pos.device())?;
-    let small_mask = abs_rel_pos.lt(&bucket_size_tensor)?;
-    let result = small_mask.where_cond(&abs_rel_pos, &bucketed)?;
-
-    Ok(sign.mul(&result)?)
+    let abs_pos_lte_mid = abs_pos.to_dtype(DType::F32)?.broadcast_le(&mid_tensor)?;
+    let rel_pos_f = rel_pos.to_dtype(DType::F32)?;
+    let log_pos_mul_sign = log_pos.broadcast_mul(&sign.to_dtype(DType::F32)?)?;
+    abs_pos_lte_mid.where_cond(&rel_pos_f, &log_pos_mul_sign)
 }
 
 /// Gather value along the last dimension using indices
@@ -532,34 +558,11 @@ fn gather_along_last_dim(input: &Tensor, indices: &Tensor) -> Result<Tensor> {
     let batch_size = input_dims[0];
     let num_heads = input_dims[1];
     let seq_len = input_dims[2];
-    let vocab_size = input_dims[3];
 
     // indices shape: (1, seq, seq) -> expand to (batch, heads, seq, seq)
     let indices_expanded = indices.broadcast_as((batch_size, num_heads, seq_len, seq_len))?;
-    let indices_i64 = indices_expanded.to_dtype(DType::I64)?;
-    let indices_vec: Vec<i64> = indices_i64.flatten_all()?.to_vec1()?;
+    let gather_indices = indices_expanded.to_dtype(DType::U32)?;
 
-    // Get input data
-    let input_data: Vec<f32> = input.flatten_all()?.to_vec1()?;
-
-    // Gather manually
-    let mut result_data = Vec::with_capacity(batch_size * num_heads * seq_len * seq_len);
-    for b in 0..batch_size {
-        for h in 0..num_heads {
-            for i in 0..seq_len {
-                for j in 0..seq_len {
-                    let idx = indices_vec[b * num_heads * seq_len * seq_len + h * seq_len * seq_len + i * seq_len + j];
-                    let idx = idx as usize;
-                    if idx < vocab_size {
-                        let val = input_data[b * num_heads * seq_len * vocab_size + h * seq_len * vocab_size + i * vocab_size + idx];
-                        result_data.push(val);
-                    } else {
-                        result_data.push(0.0);
-                    }
-                }
-            }
-        }
-    }
-
-    Tensor::from_slice(&result_data, (batch_size, num_heads, seq_len, seq_len), input.device())
+    // Native gather along last dimension (matches candle DeBERTa implementation)
+    input.gather(&gather_indices, D::Minus1)
 }
