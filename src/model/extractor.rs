@@ -499,7 +499,7 @@ impl Extractor {
                     .map_err(|e| GlinerError::model_loading(format!("Failed to create empty index tensor: {e}")))?;
                 let empty_mask = Tensor::zeros((0, self.max_width), DType::U32, &self.device)
                     .map_err(|e| GlinerError::model_loading(format!("Failed to create empty mask tensor: {e}")))?;
-                span_outputs.push(SpanRepOutput::new(empty_span, empty_idx, empty_mask));
+                span_outputs.push(SpanRepOutput { span_rep: empty_span, spans_idx: empty_idx, span_mask: empty_mask });
             }
         }
 
@@ -589,8 +589,8 @@ impl Extractor {
                     // Stack all classification embeddings
                     let all_cls_embs = Tensor::cat(&cls_embs, 0)
                         .map_err(|e| GlinerError::model_loading(format!("Failed to concat classification embeddings: {e}")))?;
-                    let output = self.classifier.forward(&all_cls_embs)?;
-                    all_logits.push(output.logits);
+                    let logits = self.classifier.forward(&all_cls_embs)?;
+                    all_logits.push(logits);
                 } else {
                     all_logits.push(Tensor::zeros((0,), DType::F32, &self.device)
                         .map_err(|e| GlinerError::model_loading(format!("Failed to create empty logits: {e}")))?);
@@ -822,7 +822,7 @@ mod tests {
         let batch = create_test_batch();
 
         let output = extractor.forward(&batch);
-        assert!(output.is_ok());
+        assert!(output.is_ok(), "Forward failed: {:?}", output.err());
         let output = output.unwrap();
         assert_eq!(output.batch_size, 2);
         assert_eq!(output.token_embeddings.len(), 2);
