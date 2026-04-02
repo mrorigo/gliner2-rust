@@ -596,22 +596,14 @@ impl Schema {
     pub fn to_dict(&self) -> serde_json::Value {
         let mut dict = serde_json::Map::new();
 
-        // Entities
+        // Entities - use array format to preserve order (BTreeMap sorts alphabetically)
         if !self.entities.is_empty() {
-            let entities: serde_json::Map<String, serde_json::Value> = self
+            let entity_names: Vec<serde_json::Value> = self
                 .entities
                 .iter()
-                .map(|e| {
-                    (
-                        e.name.clone(),
-                        e.description
-                            .clone()
-                            .map(serde_json::Value::String)
-                            .unwrap_or(serde_json::Value::String("".to_string())),
-                    )
-                })
+                .map(|e| serde_json::Value::String(e.name.clone()))
                 .collect();
-            dict.insert("entities".to_string(), serde_json::Value::Object(entities));
+            dict.insert("entities".to_string(), serde_json::Value::Array(entity_names));
 
             if !self.entity_descriptions.is_empty() {
                 let descs: serde_json::Map<String, serde_json::Value> = self

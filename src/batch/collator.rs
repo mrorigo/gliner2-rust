@@ -445,16 +445,25 @@ impl ExtractorCollator {
         let mut task_types: Vec<String> = Vec::new();
         let mut structure_labels: Vec<JsonValue> = Vec::new();
 
-        // Parse entities
+        // Parse entities - handle both array format (preserves order) and object format
         if let Some(entities) = schema.get("entities") {
-            if let Some(entities_obj) = entities.as_object() {
-                let entity_names: Vec<String> = entities_obj.keys().cloned().collect();
-                if !entity_names.is_empty() {
-                    let tokens = self.build_entity_tokens(&entity_names, entities_obj);
-                    schema_tokens_list.push(tokens);
-                    task_types.push("entities".to_string());
-                    structure_labels.push(JsonValue::Array(Vec::new()));
-                }
+            let entity_names: Vec<String> = if let Some(arr) = entities.as_array() {
+                // Array format: ["person", "organization", "location"]
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            } else if let Some(obj) = entities.as_object() {
+                // Object format: {"person": "", "organization": "", "location": ""}
+                obj.keys().cloned().collect()
+            } else {
+                Vec::new()
+            };
+
+            if !entity_names.is_empty() {
+                let tokens = self.build_entity_tokens(&entity_names, entities);
+                schema_tokens_list.push(tokens);
+                task_types.push("entities".to_string());
+                structure_labels.push(JsonValue::Array(Vec::new()));
             }
         }
 
@@ -540,7 +549,7 @@ impl ExtractorCollator {
     fn build_entity_tokens(
         &self,
         entity_names: &[String],
-        entities_obj: &serde_json::Map<String, JsonValue>,
+        entities_value: &JsonValue,
     ) -> Vec<String> {
         let mut tokens = vec![
             special_tokens::OPEN_PAREN.to_string(),
@@ -554,7 +563,7 @@ impl ExtractorCollator {
             tokens.push(name.clone());
 
             // Add description if available
-            if let Some(desc) = entities_obj.get(name).and_then(|v| v.as_str()) {
+            if let Some(desc) = entities_value.get(name).and_then(|v| v.as_str()) {
                 if !desc.is_empty() {
                     tokens.push(special_tokens::DESC_TOKEN.to_string());
                     tokens.push(format!("{name}: {desc}"));
