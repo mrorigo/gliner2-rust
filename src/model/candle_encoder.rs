@@ -34,6 +34,7 @@ use std::path::Path;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::{bert, debertav2};
+use crate::model::deberta_v3::{DebertaV3Model, DebertaV3Config};
 
 use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
@@ -45,6 +46,8 @@ pub enum EncoderType {
     Bert,
     /// DeBERTa V2 architecture.
     DebertaV2,
+    /// DeBERTa V3 architecture (no token_type_embeddings).
+    DebertaV3,
 }
 
 impl EncoderType {
@@ -53,7 +56,9 @@ impl EncoderType {
     /// Returns `DebertaV2` if the name contains "deberta", otherwise `Bert`.
     pub fn from_model_name(model_name: &str) -> Self {
         let lower = model_name.to_lowercase();
-        if lower.contains("deberta") {
+        if lower.contains("deberta-v3") || lower.contains("deberta-v3") {
+            EncoderType::DebertaV3
+        } else if lower.contains("deberta") {
             EncoderType::DebertaV2
         } else {
             EncoderType::Bert
@@ -85,11 +90,14 @@ impl EncoderType {
             .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to parse header: {e}"), path))?;
 
         // Check for DeBERTa-specific weight patterns
-        let has_deberta = header.keys().any(|name| {
-            name.contains("rel_embeddings") || name.contains("key_proj") || name.contains("query_proj")
-        });
-
-        if has_deberta {
+        let has_rel_embeddings = header.keys().any(|name| name.contains("rel_embeddings"));
+        let has_key_proj = header.keys().any(|name| name.contains("key_proj"));
+        let has_token_type = header.keys().any(|name| name.contains("token_type_embeddings"));
+        
+        // DeBERTa V3 has rel_embeddings but no token_type_embeddings
+        if has_rel_embeddings && !has_token_type {
+            Ok(EncoderType::DebertaV3)
+        } else if has_key_proj || has_rel_embeddings {
             Ok(EncoderType::DebertaV2)
         } else {
             Ok(EncoderType::Bert)
@@ -122,6 +130,7 @@ pub struct CandleEncoder {
 enum EncoderModel {
     Bert(bert::BertModel),
     DebertaV2(debertav2::DebertaV2Model),
+    DebertaV3(DebertaV3Model),
 }
 
 impl CandleEncoder {
@@ -170,11 +179,14 @@ impl CandleEncoder {
         device: Device,
     ) -> Result<Self> {
         // Detect encoder type by checking for DeBERTa-specific weight names
-        // DeBERTa uses key_proj, query_proj, value_proj, rel_embeddings
-        // BERT uses key.weight, query.weight, value.weight
-        let encoder_type = if vb.contains_tensor("encoder.attention.self.key_proj.weight")
-            || vb.contains_tensor("encoder.encoder.rel_embeddings.weight")
-        {
+        // DeBERTa V3 has rel_embeddings but no token_type_embeddings
+        let has_rel = vb.contains_tensor("encoder.encoder.rel_embeddings.weight");
+        let has_token_type = vb.contains_tensor("encoder.embeddings.token_type_embeddings.weight");
+        let has_key_proj = vb.contains_tensor("encoder.encoder.layer.0.attention.self.key_proj.weight");
+        
+        let encoder_type = if has_rel && !has_token_type {
+            EncoderType::DebertaV3
+        } else if has_key_proj || has_rel {
             EncoderType::DebertaV2
         } else {
             EncoderType::Bert
@@ -267,6 +279,15 @@ impl CandleEncoder {
                     })?;
                 Ok(EncoderModel::DebertaV2(model))
             }
+            EncoderType::DebertaV3 => {
+                let deberta_config = Self::build_deberta_v3_config(config);
+                let model = DebertaV3Model::load(vb, &deberta_config).map_err(|e| {
+                    GlinerError::model_loading(format!(
+                        "Failed to load DeBERTa V3 model: {e}"
+                    ))
+                })?;
+                Ok(EncoderModel::DebertaV3(model))
+            }
         }
     }
 
@@ -295,6 +316,11 @@ impl CandleEncoder {
                 .forward(input_ids, Some(token_type_ids), Some(attention_mask.clone()))
                 .map_err(|e| {
                     GlinerError::model_loading(format!("DeBERTa V2 forward pass failed: {e}"))
+                }),
+            EncoderModel::DebertaV3(model) => model
+                .forward(input_ids, &token_type_ids, Some(attention_mask))
+                .map_err(|e| {
+                    GlinerError::model_loading(format!("DeBERTa V3 forward pass failed: {e}"))
                 }),
         }
     }
@@ -339,6 +365,7 @@ impl CandleEncoder {
         let encoder_type = match &self.model {
             EncoderModel::Bert(_) => EncoderType::Bert,
             EncoderModel::DebertaV2(_) => EncoderType::DebertaV2,
+            EncoderModel::DebertaV3(_) => EncoderType::DebertaV3,
         };
 
         // Rebuild config from current state
@@ -375,7 +402,24 @@ impl CandleEncoder {
         }
     }
 
-    /// Build a candle DeBERTa V2 config from the extractor config.
+    /// Build a DeBERTa V3 config from the extractor config.
+    fn build_deberta_v3_config(config: &ExtractorConfig) -> DebertaV3Config {
+        DebertaV3Config {
+            vocab_size: config.vocab_size,
+            hidden_size: config.hidden_size,
+            num_hidden_layers: config.num_hidden_layers,
+            num_attention_heads: config.num_attention_heads,
+            intermediate_size: config.intermediate_size,
+            hidden_dropout_prob: config.hidden_dropout_prob as f64,
+            max_position_embeddings: config.max_position_embeddings,
+            layer_norm_eps: config.layer_norm_eps as f64,
+            pad_token_id: config.pad_token_id,
+            max_relative_positions: 512,
+            pos_att_type: vec!["p2c".to_string(), "c2p".to_string()],
+        }
+    }
+
+    /// Build a candle DeBERTa V2 config from the extractor config (for compatibility).
     fn build_deberta_config(config: &ExtractorConfig) -> debertav2::Config {
         debertav2::Config {
             vocab_size: config.vocab_size,
@@ -391,7 +435,7 @@ impl CandleEncoder {
             initializer_range: 0.02,
             layer_norm_eps: config.layer_norm_eps as f64,
             relative_attention: true,
-            max_relative_positions: 256,
+            max_relative_positions: 512,
             pad_token_id: Some(config.pad_token_id),
             position_biased_input: false,
             pos_att_type: vec!["p2c".to_string(), "c2p".to_string()],

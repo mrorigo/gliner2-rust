@@ -25,6 +25,7 @@
 pub mod candle_encoder;
 pub mod classifier;
 pub mod count_pred;
+pub mod deberta_v3;
 pub mod extractor;
 pub mod loading;
 pub mod span_rep;

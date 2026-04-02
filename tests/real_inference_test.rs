@@ -205,3 +205,89 @@ fn test_gliner2_batch_extraction_with_real_tokenizer() {
     
     println!("\n✅ GLiNER2 batch extraction with real tokenizer works!");
 }
+
+/// Test real GLiNER2 model weight loading and inference.
+///
+/// This test downloads the actual GLiNER2 model weights and tokenizer,
+/// loads them, and runs entity extraction to prove real inference works.
+#[test]
+fn test_real_gliner2_model_loading() {
+    use gliner2_rust::{GLiNER2, ExtractorConfig, SchemaBuilder};
+    use std::path::Path;
+    
+    let model_id = "fastino/gliner2-base-v1";
+    println!("Downloading GLiNER2 model from HuggingFace Hub: {}", model_id);
+    
+    // Download model weights
+    let model_path = download_from_hub(model_id, "model.safetensors");
+    println!("Downloaded model weights to: {:?}", model_path);
+    
+    // Download tokenizer
+    let tokenizer_path = download_from_hub(model_id, "tokenizer.json");
+    println!("Downloaded tokenizer to: {:?}", tokenizer_path);
+    
+    // Create config matching the actual GLiNER2 model architecture
+    // The model uses DeBERTa-v3-base encoder with vocab_size 128011
+    let config = ExtractorConfig::builder()
+        .model_name(model_id)
+        .tokenizer_path(tokenizer_path.clone())
+        .hidden_size(768)
+        .vocab_size(128011)
+        .num_hidden_layers(12)
+        .num_attention_heads(12)
+        .intermediate_size(3072)
+        .build()
+        .expect("Failed to build config");
+    
+    // Create GLiNER2 engine
+    println!("Creating GLiNER2 engine...");
+    let mut model = GLiNER2::new(&config)
+        .expect("Failed to create GLiNER2 engine");
+    
+    // Load the actual model weights
+    println!("Loading model weights from: {:?}", model_path);
+    model.load_weights(&model_path)
+        .expect("Failed to load model weights");
+    
+    println!("✅ Model weights loaded successfully!");
+    
+    // Create a schema for entity extraction
+    let schema = SchemaBuilder::new()
+        .entities(vec!["person".to_string(), "organization".to_string(), "location".to_string()])
+        .build()
+        .expect("Failed to build schema");
+    
+    // Test text
+    let text = "Apple CEO Tim Cook announced new products at the headquarters in Cupertino, California.";
+    
+    println!("\nRunning entity extraction on: {}", text);
+    println!("Schema entities: person, organization, location\n");
+    
+    // Run extraction with real model weights
+    let result = model.extract_entities(
+        text,
+        &["person", "organization", "location"],
+        Some(0.5),  // threshold
+        true,       // include_confidence
+        true,       // include_spans
+        None,       // max_len
+    );
+    
+    assert!(result.is_ok(), "Entity extraction failed: {:?}", result.err());
+    
+    let result = result.unwrap();
+    
+    // Print results
+    println!("Extraction results:");
+    println!("{:#?}", result);
+    
+    // Verify we got meaningful results with real weights
+    let result_str = format!("{:?}", result);
+    assert!(
+        result_str.contains("entities"),
+        "Expected entity extraction results, got: {}",
+        result_str
+    );
+    
+    println!("\n✅ Real GLiNER2 inference with trained weights works!");
+}

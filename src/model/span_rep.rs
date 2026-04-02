@@ -11,7 +11,7 @@
 //! - span_rep[i, w] = out_project(concat(start_rep, end_rep))
 
 use candle_core::{Device, DType, Tensor};
-use candle_nn::{Linear, LayerNorm, VarBuilder, Module};
+use candle_nn::{Linear, VarBuilder, Module};
 
 use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
@@ -35,20 +35,18 @@ impl std::fmt::Debug for SpanRepOutput {
 }
 
 /// markerV0 span representation layer
+/// Architecture: Linear + GELU + Linear (no LayerNorm)
 pub struct SpanRepresentationLayer {
     pub max_width: usize,
     pub hidden_size: usize,
-    // project_start: Linear + LayerNorm + Linear
+    // project_start: Linear(768→3072) + GELU + Linear(3072→768)
     project_start_0: Linear,      // 768 → 3072
-    project_start_ln: LayerNorm,  // 3072
     project_start_1: Linear,      // 3072 → 768
-    // project_end: Linear + LayerNorm + Linear
+    // project_end: Linear(768→3072) + GELU + Linear(3072→768)
     project_end_0: Linear,        // 768 → 3072
-    project_end_ln: LayerNorm,    // 3072
     project_end_1: Linear,        // 3072 → 768
-    // out_project: Linear + LayerNorm + Linear
+    // out_project: Linear(1536→3072) + GELU + Linear(3072→768)
     out_project_0: Linear,        // 1536 → 3072
-    out_project_ln: LayerNorm,    // 3072
     out_project_1: Linear,        // 3072 → 768
     device: Device,
 }
@@ -69,13 +67,10 @@ impl Clone for SpanRepresentationLayer {
             max_width: self.max_width,
             hidden_size: self.hidden_size,
             project_start_0: self.project_start_0.clone(),
-            project_start_ln: self.project_start_ln.clone(),
             project_start_1: self.project_start_1.clone(),
             project_end_0: self.project_end_0.clone(),
-            project_end_ln: self.project_end_ln.clone(),
             project_end_1: self.project_end_1.clone(),
             out_project_0: self.out_project_0.clone(),
-            out_project_ln: self.out_project_ln.clone(),
             out_project_1: self.out_project_1.clone(),
             device: self.device.clone(),
         }
@@ -92,35 +87,29 @@ impl SpanRepresentationLayer {
     fn build_from_varbuilder(vb: VarBuilder, hidden_size: usize, max_width: usize, device: Device) -> Result<Self> {
         let intermediate = hidden_size * 4; // 3072 for 768 hidden
         
-        // project_start
+        // project_start: Linear(768→3072) + GELU + Linear(3072→768)
         let project_start_0 = candle_nn::linear(hidden_size, intermediate, vb.pp("project_start").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_start_0: {e}")))?;
-        let project_start_ln = candle_nn::layer_norm(intermediate, 1e-5, vb.pp("project_start").pp("3"))
-            .map_err(|e| GlinerError::model_loading(format!("Failed to create project_start_ln: {e}")))?;
-        let project_start_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_start").pp("4"))
+        let project_start_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_start").pp("3"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_start_1: {e}")))?;
         
-        // project_end
+        // project_end: Linear(768→3072) + GELU + Linear(3072→768)
         let project_end_0 = candle_nn::linear(hidden_size, intermediate, vb.pp("project_end").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_end_0: {e}")))?;
-        let project_end_ln = candle_nn::layer_norm(intermediate, 1e-5, vb.pp("project_end").pp("3"))
-            .map_err(|e| GlinerError::model_loading(format!("Failed to create project_end_ln: {e}")))?;
-        let project_end_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_end").pp("4"))
+        let project_end_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("project_end").pp("3"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create project_end_1: {e}")))?;
         
-        // out_project
+        // out_project: Linear(1536→3072) + GELU + Linear(3072→768)
         let out_project_0 = candle_nn::linear(hidden_size * 2, intermediate, vb.pp("out_project").pp("0"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create out_project_0: {e}")))?;
-        let out_project_ln = candle_nn::layer_norm(intermediate, 1e-5, vb.pp("out_project").pp("3"))
-            .map_err(|e| GlinerError::model_loading(format!("Failed to create out_project_ln: {e}")))?;
-        let out_project_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("out_project").pp("4"))
+        let out_project_1 = candle_nn::linear(intermediate, hidden_size, vb.pp("out_project").pp("3"))
             .map_err(|e| GlinerError::model_loading(format!("Failed to create out_project_1: {e}")))?;
 
         Ok(Self {
             max_width, hidden_size,
-            project_start_0, project_start_ln, project_start_1,
-            project_end_0, project_end_ln, project_end_1,
-            out_project_0, out_project_ln, out_project_1,
+            project_start_0, project_start_1,
+            project_end_0, project_end_1,
+            out_project_0, out_project_1,
             device,
         })
     }
@@ -137,34 +126,28 @@ impl SpanRepresentationLayer {
     fn project_start(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.project_start_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("project_start_0 failed: {e}")))?;
-        let x = self.project_start_ln.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("project_start_ln failed: {e}")))?;
+        let x = x.gelu()
+            .map_err(|e| GlinerError::model_loading(format!("project_start gelu failed: {e}")))?;
         self.project_start_1.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("project_start_1 failed: {e}")))?
-            .gelu()
-            .map_err(|e| GlinerError::model_loading(format!("project_start gelu failed: {e}")))
+            .map_err(|e| GlinerError::model_loading(format!("project_start_1 failed: {e}")))
     }
 
     fn project_end(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.project_end_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("project_end_0 failed: {e}")))?;
-        let x = self.project_end_ln.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("project_end_ln failed: {e}")))?;
+        let x = x.gelu()
+            .map_err(|e| GlinerError::model_loading(format!("project_end gelu failed: {e}")))?;
         self.project_end_1.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("project_end_1 failed: {e}")))?
-            .gelu()
-            .map_err(|e| GlinerError::model_loading(format!("project_end gelu failed: {e}")))
+            .map_err(|e| GlinerError::model_loading(format!("project_end_1 failed: {e}")))
     }
 
     fn out_project(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.out_project_0.forward(x)
             .map_err(|e| GlinerError::model_loading(format!("out_project_0 failed: {e}")))?;
-        let x = self.out_project_ln.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("out_project_ln failed: {e}")))?;
+        let x = x.gelu()
+            .map_err(|e| GlinerError::model_loading(format!("out_project gelu failed: {e}")))?;
         self.out_project_1.forward(&x)
-            .map_err(|e| GlinerError::model_loading(format!("out_project_1 failed: {e}")))?
-            .gelu()
-            .map_err(|e| GlinerError::model_loading(format!("out_project gelu failed: {e}")))
+            .map_err(|e| GlinerError::model_loading(format!("out_project_1 failed: {e}")))
     }
 
     pub fn forward(&self, token_embs: &Tensor) -> Result<SpanRepOutput> {
