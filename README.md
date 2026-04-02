@@ -14,6 +14,7 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 - ✅ Non-empty entity extraction with confidence + span outputs in integration tests
 - ✅ Classification/relation/structure extraction paths implemented in runtime API
 - ✅ Offline Python-vs-Rust parity harness running against local model snapshots
+- ✅ Strict long-context `max_len` parity fixtures passing for entities/relations/structures
 
 **Current focus:** continued numerical parity tuning and broader regression coverage across more texts/schemas/devices.
 
@@ -221,16 +222,18 @@ cargo test --release --test python_parity_test
 - ✅ Classification, relation, and structure extraction paths are implemented and tested end-to-end
 - ✅ Metadata-aware decoding is wired for relation thresholds and structure field metadata (dtype/threshold/validators)
 - ✅ Offline Python parity fixture comparisons are in place for reproducible Rust-vs-Python output checks
+- ✅ Parity harness coverage now includes threshold-edge fixtures (`0.49/0.50/0.51`) and multi-label classification fixtures
+- ✅ Strict long-context truncation parity is validated via `max_len` fixtures for entities/relations/structures
 
 ### What remains
 - ⚠️ Continue improving numerical parity against Python for intermediate tensors/layer outputs
-- ⚠️ Expand parity fixtures beyond current baseline cases to cover harder relation/structure/entity edge cases
+- ⚠️ Expand parity fixtures to additional long-context and adversarial edge cases across more schema compositions
 - ⚠️ Expand regression coverage across diverse schemas, longer texts, and additional model variants
 - ⚠️ Validate behavior on additional hardware backends/devices as part of performance hardening
 
 ### Next steps
 1. Add targeted parity snapshots for intermediate tensors in selected layers
-2. Add more deterministic fixture pairs to the offline Python-vs-Rust parity harness
+2. Add more deterministic fixture pairs to the offline Python-vs-Rust parity harness (including multi-task mixed schemas)
 3. Benchmark and tune CPU/GPU execution paths with parity checks enabled
 4. Keep tightening confidence calibration consistency across edge cases
 
@@ -253,6 +256,8 @@ This project was developed collaboratively across multiple AI coding sessions.
 - Entity extraction/scoring parity fixes (count-slot handling, overlap suppression, calibration debugging)
 - Classification/relation/structure inference path implementation and metadata-aware decoding
 - Runtime `max_len` handling fixes and schema embedding gather corrections
+- Runtime API parity updates for `max_len` in classification/relation convenience methods
+- Strict long-context `max_len` fixture parity restoration for entities/relations/structures
 - Focused `--release` integration coverage for relation/structure metadata behavior
 - Offline Python parity harness (`debug_comparison/python_parity_reference.py`) and fixture-based Rust/Python comparisons
 - Integration validation with real model tests and cleanup of debug output
