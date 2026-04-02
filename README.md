@@ -2,7 +2,7 @@
 
 A high-performance, pure Rust implementation of the [GLiNER2](https://github.com/urchade/GLiNER2) information extraction model. This library provides efficient CPU-based inference for entity extraction, text classification, structured data extraction, and relation extraction — with zero external dependencies beyond Cargo.
 
-## 🎯 Current Status: End-to-End Inference Working, Parity Tuning Ongoing
+## 🎯 Current Status: Full Inference Surface Working, Parity Tuning Ongoing
 
 **The full GLiNER2 inference pipeline is implemented and running end-to-end in Rust.** Key capabilities currently verified:
 - ✅ Load real GLiNER2 model weights from HuggingFace Hub
@@ -12,6 +12,8 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 - ✅ Schema/text indices tracking aligned with Python behavior
 - ✅ Entity order preservation aligned with Python behavior
 - ✅ Non-empty entity extraction with confidence + span outputs in integration tests
+- ✅ Classification/relation/structure extraction paths implemented in runtime API
+- ✅ Offline Python-vs-Rust parity harness running against local model snapshots
 
 **Current focus:** continued numerical parity tuning and broader regression coverage across more texts/schemas/devices.
 
@@ -43,8 +45,8 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 - ⚠️ **Numerical Parity Tuning** — Inference is working; ongoing work focuses on tightening intermediate-value parity with Python across broader scenarios
 
 ### Test Coverage
-- ✅ **80 Unit Tests** — Included across model, batching, schema, and inference modules
-- ✅ **4 Integration Tests** — Included for real HuggingFace Hub end-to-end validation
+- ✅ **81 Unit Tests** — Included across model, batching, schema, and inference modules
+- ✅ **18 Integration Tests** — Included across focused API coverage, real Hub inference, and Python parity fixture validation
 - ✅ **Zero tch Dependencies** — Pure Rust, no PyTorch runtime required
 
 ## 🏗️ Architecture
@@ -151,11 +153,12 @@ let engine = GLiNER2::new(&config)?;
 let schema = SchemaBuilder::new()
     .entities(vec!["person".to_string(), "organization".to_string()])
     .build()?;
+let labels: Vec<&str> = schema.entities.iter().map(|e| e.name.as_str()).collect();
 
 // Extract entities
 let result = engine.extract_entities(
     "Apple CEO Tim Cook visited Cupertino.",
-    &["person", "organization"],
+    &labels,
     Some(0.5),  // threshold
     true,       // include_confidence
     true,       // include_spans
@@ -197,9 +200,15 @@ cargo test --lib
 cargo test --test real_inference_test
 ```
 
+### Run Focused Parity Fixture Test
+```bash
+cargo test --release --test python_parity_test
+```
+
 ### Test Results
-- ✅ The project currently includes **80 unit tests** and **4 integration tests**
+- ✅ The project currently includes **81 unit tests** and **18 integration tests**
 - ✅ Integration coverage includes real HuggingFace Hub model/tokenizer downloads
+- ✅ Integration coverage includes an offline Python-vs-Rust fixture parity harness
 - ⏱️ Full integration runs can take ~60–120s due to model initialization and Hub/cache behavior
 
 ## 🔍 Parity Status and Remaining Work
@@ -209,15 +218,19 @@ cargo test --test real_inference_test
 - ✅ Entity extraction returns meaningful outputs with confidence and character spans
 - ✅ Collator/tokenizer routing (including subword position handling) is aligned for GLiNER2 usage
 - ✅ count_embed and span scoring paths are wired and active in inference
+- ✅ Classification, relation, and structure extraction paths are implemented and tested end-to-end
+- ✅ Metadata-aware decoding is wired for relation thresholds and structure field metadata (dtype/threshold/validators)
+- ✅ Offline Python parity fixture comparisons are in place for reproducible Rust-vs-Python output checks
 
 ### What remains
 - ⚠️ Continue improving numerical parity against Python for intermediate tensors/layer outputs
+- ⚠️ Expand parity fixtures beyond current baseline cases to cover harder relation/structure/entity edge cases
 - ⚠️ Expand regression coverage across diverse schemas, longer texts, and additional model variants
 - ⚠️ Validate behavior on additional hardware backends/devices as part of performance hardening
 
 ### Next steps
 1. Add targeted parity snapshots for intermediate tensors in selected layers
-2. Add more deterministic integration fixtures for entities/relations/structures
+2. Add more deterministic fixture pairs to the offline Python-vs-Rust parity harness
 3. Benchmark and tune CPU/GPU execution paths with parity checks enabled
 4. Keep tightening confidence calibration consistency across edge cases
 
@@ -238,6 +251,10 @@ This project was developed collaboratively across multiple AI coding sessions.
 - Count-aware scoring pipeline fixes in `count_embed` (GRU/math/shape/transformer behavior)
 - Span representation parity fixes (activation path and projection behavior)
 - Entity extraction/scoring parity fixes (count-slot handling, overlap suppression, calibration debugging)
+- Classification/relation/structure inference path implementation and metadata-aware decoding
+- Runtime `max_len` handling fixes and schema embedding gather corrections
+- Focused `--release` integration coverage for relation/structure metadata behavior
+- Offline Python parity harness (`debug_comparison/python_parity_reference.py`) and fixture-based Rust/Python comparisons
 - Integration validation with real model tests and cleanup of debug output
 
 ### Guidance & Support
