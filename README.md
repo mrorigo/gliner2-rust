@@ -271,8 +271,6 @@ Apache-2.0
 
 ## 🔗 Links
 
-- [GLiNER2 Python Implementation](https://github.com/urchade/GLiNER2)
+- [GLiNER2 Python Implementation](https://github.com/fastino-ai/GLiNER2)
 - [Candle Documentation](https://github.com/huggingface/candle)
 - [HuggingFace Tokenizers](https://github.com/huggingface/tokenizers)
-- [Implementation Plan (Phase 1)](PLAN.md)
-- [Implementation Plan (Phase 2)](PLAN2.md)
