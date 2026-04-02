@@ -211,6 +211,8 @@ fn test_python_reference_parity_fixtures() {
             "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
             "Apple announced iPhone in Cupertino, California.",
             "product_info",
+            0.5f32,
+            0.5f32,
             0.0f32,
         ),
         (
@@ -220,6 +222,8 @@ fn test_python_reference_parity_fixtures() {
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "Microsoft was founded by Bill Gates in Albuquerque.",
             "profile",
+            0.5f32,
+            0.5f32,
             0.0f32,
         ),
         (
@@ -229,14 +233,67 @@ fn test_python_reference_parity_fixtures() {
             "Tesla engineer Elon Musk works in Austin, Texas.",
             "Tesla engineer Elon Musk works in Austin, Texas.",
             "team_profile",
+            0.5f32,
+            0.5f32,
             0.0f32,
+        ),
+        (
+            "threshold_edge_049",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "I love this product.",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "Apple announced iPhone in Cupertino, California.",
+            "threshold_case",
+            0.49f32,
+            0.49f32,
+            0.49f32,
+        ),
+        (
+            "threshold_edge_050",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "I love this product.",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "Apple announced iPhone in Cupertino, California.",
+            "threshold_case",
+            0.50f32,
+            0.50f32,
+            0.50f32,
+        ),
+        (
+            "threshold_edge_051",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "I love this product.",
+            "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "Apple announced iPhone in Cupertino, California.",
+            "threshold_case",
+            0.51f32,
+            0.51f32,
+            0.51f32,
         ),
     ];
 
     let mut rust_fixtures = Vec::new();
-    for (id, entities_text, class_text, relations_text, structure_text, structure_key, structure_threshold) in fixtures {
+    for (
+        id,
+        entities_text,
+        class_text,
+        relations_text,
+        structure_text,
+        structure_key,
+        entity_threshold,
+        relation_threshold,
+        structure_threshold,
+    ) in fixtures
+    {
         let entities_raw = engine
-            .extract_entities(entities_text, &["person", "organization", "location"], Some(0.5), false, false, None)
+            .extract_entities(
+                entities_text,
+                &["person", "organization", "location"],
+                Some(entity_threshold),
+                false,
+                false,
+                None,
+            )
             .expect("rust entities failed");
         let class_raw = engine
             .classify_text(
@@ -247,7 +304,13 @@ fn test_python_reference_parity_fixtures() {
             )
             .expect("rust classification failed");
         let rel_raw = engine
-            .extract_relations(relations_text, &["works_for"], Some(0.5), false, false)
+            .extract_relations(
+                relations_text,
+                &["works_for"],
+                Some(relation_threshold),
+                false,
+                false,
+            )
             .expect("rust relation failed");
         let struct_schema = SchemaBuilder::new()
             .structure(structure_key)

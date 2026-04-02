@@ -128,6 +128,8 @@ def main() -> int:
             "structure_text": "Apple announced iPhone in Cupertino, California.",
             "structure_key": "product_info",
             "structure_threshold": 0.0,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
         },
         {
             "id": "microsoft_founder",
@@ -137,6 +139,8 @@ def main() -> int:
             "structure_text": "Microsoft was founded by Bill Gates in Albuquerque.",
             "structure_key": "profile",
             "structure_threshold": 0.0,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
         },
         {
             "id": "tesla_engineer",
@@ -146,6 +150,41 @@ def main() -> int:
             "structure_text": "Tesla engineer Elon Musk works in Austin, Texas.",
             "structure_key": "team_profile",
             "structure_threshold": 0.0,
+            "entity_threshold": 0.5,
+            "relation_threshold": 0.5,
+        },
+        {
+            "id": "threshold_edge_049",
+            "entities_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "class_text": "I love this product.",
+            "relations_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "structure_text": "Apple announced iPhone in Cupertino, California.",
+            "structure_key": "threshold_case",
+            "structure_threshold": 0.49,
+            "entity_threshold": 0.49,
+            "relation_threshold": 0.49,
+        },
+        {
+            "id": "threshold_edge_050",
+            "entities_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "class_text": "I love this product.",
+            "relations_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "structure_text": "Apple announced iPhone in Cupertino, California.",
+            "structure_key": "threshold_case",
+            "structure_threshold": 0.50,
+            "entity_threshold": 0.50,
+            "relation_threshold": 0.50,
+        },
+        {
+            "id": "threshold_edge_051",
+            "entities_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "class_text": "I love this product.",
+            "relations_text": "Apple CEO Tim Cook announced iPhone in Cupertino, California.",
+            "structure_text": "Apple announced iPhone in Cupertino, California.",
+            "structure_key": "threshold_case",
+            "structure_threshold": 0.51,
+            "entity_threshold": 0.51,
+            "relation_threshold": 0.51,
         },
     ]
 
@@ -154,6 +193,7 @@ def main() -> int:
         entities_raw = model.extract_entities(
             fixture["entities_text"],
             ["person", "organization", "location"],
+            threshold=fixture.get("entity_threshold", 0.5),
             include_confidence=False,
             include_spans=False,
         )
@@ -165,6 +205,7 @@ def main() -> int:
         rel_raw = model.extract_relations(
             fixture["relations_text"],
             ["works_for"],
+            threshold=fixture.get("relation_threshold", 0.5),
             include_confidence=False,
             include_spans=False,
         )
