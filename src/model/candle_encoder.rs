@@ -93,7 +93,7 @@ impl EncoderType {
         let has_rel_embeddings = header.keys().any(|name| name.contains("rel_embeddings"));
         let has_key_proj = header.keys().any(|name| name.contains("key_proj"));
         let has_token_type = header.keys().any(|name| name.contains("token_type_embeddings"));
-        
+
         // DeBERTa V3 has rel_embeddings but no token_type_embeddings
         if has_rel_embeddings && !has_token_type {
             Ok(EncoderType::DebertaV3)
@@ -183,7 +183,7 @@ impl CandleEncoder {
         let has_rel = vb.contains_tensor("encoder.encoder.rel_embeddings.weight");
         let has_token_type = vb.contains_tensor("encoder.embeddings.token_type_embeddings.weight");
         let has_key_proj = vb.contains_tensor("encoder.encoder.layer.0.attention.self.key_proj.weight");
-        
+
         let encoder_type = if has_rel && !has_token_type {
             EncoderType::DebertaV3
         } else if has_key_proj || has_rel {
@@ -258,7 +258,7 @@ impl CandleEncoder {
         // So we add the "encoder" prefix to the VarBuilder to match the stored names.
         let vb = vb.pp("encoder");
 
-        tracing::info!("Loading {:?} encoder with vocab_size={}, hidden_size={}", 
+        tracing::info!("Loading {:?} encoder with vocab_size={}, hidden_size={}",
             encoder_type, config.vocab_size, config.hidden_size);
 
         match encoder_type {
@@ -414,8 +414,11 @@ impl CandleEncoder {
             max_position_embeddings: config.max_position_embeddings,
             layer_norm_eps: config.layer_norm_eps as f64,
             pad_token_id: config.pad_token_id,
-            max_relative_positions: 512,
+            max_relative_positions: -1,
             pos_att_type: vec!["p2c".to_string(), "c2p".to_string()],
+            position_buckets: 256,
+            share_att_key: true,
+            relative_attention: true,
         }
     }
 

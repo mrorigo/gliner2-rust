@@ -846,7 +846,7 @@ impl GLiNER2 {
         eprintln!("DEBUG extract_entities: sample_idx={}, schema_idx={}", sample_idx, schema_idx);
         eprintln!("DEBUG: span_representations.is_some()={}", output.span_representations.is_some());
         eprintln!("DEBUG: schema_embeddings.len()={}", output.schema_embeddings.len());
-        
+
         // Get span representations for this sample
         let span_outputs = output.span_representations.as_ref();
         if span_outputs.is_none() {
@@ -888,23 +888,45 @@ impl GLiNER2 {
         let schema_tokens = schema_tokens.unwrap();
         eprintln!("DEBUG: schema_tokens={:?}", schema_tokens);
 
-        // Find entity type tokens (tokens starting with [E])
+        // Find entity type tokens (tokens following [E] markers)
+        // Schema format: ["(", "[P]", "entities", "(", "[E]", "location", "[E]", "organization", "[E]", "person", ")", ")"]
+        // Special tokens are tracked in schema_special_indices, so we need to map [E] positions to special token indices
         let mut entity_types: Vec<String> = Vec::new();
         let mut entity_type_indices: Vec<usize> = Vec::new();
+        let mut special_token_counter = 0;
         for (i, token) in schema_tokens.iter().enumerate() {
-            if token.starts_with("[E]") {
-                let entity_type = token.trim_start_matches("[E] ").trim_start_matches("[E]").to_string();
-                if !entity_type.is_empty() {
-                    entity_types.push(entity_type);
-                    entity_type_indices.push(i);
+            // Check if this is a special token (starts with '[' and ends with ']')
+            if token.starts_with('[') && token.ends_with(']') {
+                if token == "[E]" {
+                    // The entity type is the next token after [E]
+                    if i + 1 < schema_tokens.len() {
+                        let entity_type = schema_tokens[i + 1].clone();
+                        if !entity_type.is_empty() {
+                            entity_types.push(entity_type);
+                            // Map to the index in schema_tokens_embs (which only contains special token embeddings)
+                            entity_type_indices.push(special_token_counter);
+                        }
+                    }
                 }
+                special_token_counter += 1;
             }
         }
         eprintln!("DEBUG: entity_types={:?}, entity_type_indices={:?}", entity_types, entity_type_indices);
+        eprintln!("DEBUG: schema_tokens_embs.len()={}", schema_tokens_embs.len());
 
         if entity_types.is_empty() {
             eprintln!("DEBUG: No entity types found");
             return Ok(JsonValue::Object(entities));
+        }
+
+        // Debug: print first few values of each schema embedding to see if they differ
+        for (emb_idx, emb) in schema_tokens_embs.iter().enumerate() {
+            if let Ok(data) = emb.flatten_all() {
+                if let Ok(vec) = data.to_vec1::<f32>() {
+                    let first_5: Vec<f32> = vec.iter().take(5).cloned().collect();
+                    eprintln!("DEBUG: schema_tokens_embs[{}] first 5: {:?}", emb_idx, first_5);
+                }
+            }
         }
 
         // Get span rep shape: (seq_len, max_width, hidden_size)
@@ -975,7 +997,7 @@ impl GLiNER2 {
                     continue;
                 }
             };
-            eprintln!("DEBUG: schema_emb_data.len()={}, hidden_size={}, first 5 values: {:?}", 
+            eprintln!("DEBUG: schema_emb_data.len()={}, hidden_size={}, first 5 values: {:?}",
                      schema_emb_data.len(), hidden_size, &schema_emb_data[..5.min(schema_emb_data.len())]);
 
             // Get spans indices
@@ -1008,6 +1030,11 @@ impl GLiNER2 {
                         .zip(schema_emb_data.iter())
                         .map(|(a, b)| a * b)
                         .sum();
+
+                    // Debug: print raw scores for first few spans
+                    if i < 3 && w < 2 {
+                        eprintln!("DEBUG: span[{},{}] raw_score={}, prob_before_sigmoid_check={}", i, w, score, 1.0 / (1.0 + (-score).exp()));
+                    }
 
                     // Apply sigmoid
                     let prob = 1.0 / (1.0 + (-score).exp());
