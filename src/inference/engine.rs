@@ -1282,33 +1282,460 @@ impl GLiNER2 {
     /// Extract relations from model output.
     fn extract_relations_from_output(
         &self,
-        _output: &crate::model::ExtractorOutput,
-        _batch: &PreprocessedBatch,
-        _sample_idx: usize,
-        _schema_idx: usize,
-        _threshold: f32,
-        _include_confidence: bool,
-        _include_spans: bool,
+        output: &crate::model::ExtractorOutput,
+        batch: &PreprocessedBatch,
+        sample_idx: usize,
+        schema_idx: usize,
+        threshold: f32,
+        include_confidence: bool,
+        include_spans: bool,
     ) -> Result<JsonValue> {
-        Err(GlinerError::inference(
-            "Relation extraction inference is not implemented yet",
-        ))
+        // Requires span representations.
+        let span_outputs = match output.span_representations.as_ref() {
+            Some(v) if sample_idx < v.len() => &v[sample_idx],
+            _ => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        // Schema embeddings for this relation schema.
+        let schema_tokens_embs = match output
+            .schema_embeddings
+            .get(sample_idx)
+            .and_then(|s| s.get(schema_idx))
+        {
+            Some(v) if !v.is_empty() => v,
+            _ => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let schema_tokens = match batch.schema_tokens(sample_idx, schema_idx) {
+            Some(v) => v,
+            None => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        // Relation fields are tokens that follow [R].
+        let mut field_names = Vec::new();
+        let mut field_emb_indices = Vec::new();
+        let mut special_token_counter = 0usize;
+        for (i, token) in schema_tokens.iter().enumerate() {
+            if token.starts_with('[') && token.ends_with(']') {
+                if token == "[R]" && i + 1 < schema_tokens.len() {
+                    field_names.push(schema_tokens[i + 1].clone());
+                    field_emb_indices.push(special_token_counter);
+                }
+                special_token_counter += 1;
+            }
+        }
+        if field_names.len() < 2 {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+
+        let hidden_size = span_outputs.span_rep.dims().get(2).copied().unwrap_or(0);
+        if hidden_size == 0 {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+
+        let mut field_emb_data: Vec<f32> = Vec::with_capacity(field_names.len() * hidden_size);
+        for &emb_idx in &field_emb_indices {
+            if emb_idx < schema_tokens_embs.len() {
+                let emb = &schema_tokens_embs[emb_idx];
+                if let Ok(data) = emb.flatten_all() {
+                    if let Ok(vec) = data.to_vec1::<f32>() {
+                        field_emb_data.extend_from_slice(&vec);
+                    }
+                }
+            } else {
+                field_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+            }
+        }
+
+        let field_embs_tensor = match Tensor::from_vec(
+            field_emb_data,
+            (field_names.len(), hidden_size),
+            &output.device,
+        ) {
+            Ok(t) => t,
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let pred_count = Self::predicted_count(output, batch, sample_idx, schema_idx, schema_tokens_embs, &self.model);
+        let struct_proj = match self.model.count_embed.forward(&field_embs_tensor, pred_count) {
+            Ok(out) => out.embeddings,
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let struct_proj_data: Vec<f32> = match struct_proj.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let span_rep_data: Vec<f32> = match span_outputs.span_rep.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let mask_data: Vec<u32> = match span_outputs.span_mask.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let spans_idx_data: Vec<u32> = match span_outputs.spans_idx.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let mask_dims = span_outputs.span_mask.dims();
+        if mask_dims.len() != 2 {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+        let mask_seq_len = mask_dims[0];
+        let mask_max_width = mask_dims[1];
+        let max_width = span_outputs.span_rep.dims().get(1).copied().unwrap_or(mask_max_width);
+        let total_spans = mask_seq_len * mask_max_width;
+
+        let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
+        let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
+        let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
+
+        let mut instances = Vec::new();
+        for inst in 0..pred_count {
+            let mut top_fields: Vec<Option<(String, f32, usize, usize)>> = vec![None; field_names.len()];
+
+            for field_idx in 0..field_names.len() {
+                let mut spans = Self::collect_scored_spans(
+                    &span_rep_data,
+                    &struct_proj_data,
+                    &mask_data,
+                    &spans_idx_data,
+                    mask_seq_len,
+                    mask_max_width,
+                    max_width,
+                    hidden_size,
+                    field_names.len(),
+                    inst,
+                    field_idx,
+                    total_spans,
+                    text_tokens,
+                    start_mappings,
+                    end_mappings,
+                    threshold,
+                );
+
+                spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                if let Some(first) = spans.into_iter().next() {
+                    top_fields[field_idx] = Some(first);
+                }
+            }
+
+            if top_fields.len() >= 2 {
+                if let (Some(head), Some(tail)) = (&top_fields[0], &top_fields[1]) {
+                    let rel_obj = if include_spans && include_confidence {
+                        serde_json::json!({
+                            "head": {"text": head.0, "confidence": head.1, "start": head.2, "end": head.3},
+                            "tail": {"text": tail.0, "confidence": tail.1, "start": tail.2, "end": tail.3},
+                        })
+                    } else if include_spans {
+                        serde_json::json!({
+                            "head": {"text": head.0, "start": head.2, "end": head.3},
+                            "tail": {"text": tail.0, "start": tail.2, "end": tail.3},
+                        })
+                    } else if include_confidence {
+                        serde_json::json!({
+                            "head": {"text": head.0, "confidence": head.1},
+                            "tail": {"text": tail.0, "confidence": tail.1},
+                        })
+                    } else {
+                        serde_json::json!({
+                            "head": head.0,
+                            "tail": tail.0,
+                        })
+                    };
+                    instances.push(rel_obj);
+                }
+            }
+        }
+
+        Ok(JsonValue::Array(instances))
     }
 
     /// Extract structures from model output.
     fn extract_structures_from_output(
         &self,
-        _output: &crate::model::ExtractorOutput,
-        _batch: &PreprocessedBatch,
-        _sample_idx: usize,
-        _schema_idx: usize,
-        _threshold: f32,
-        _include_confidence: bool,
-        _include_spans: bool,
+        output: &crate::model::ExtractorOutput,
+        batch: &PreprocessedBatch,
+        sample_idx: usize,
+        schema_idx: usize,
+        threshold: f32,
+        include_confidence: bool,
+        include_spans: bool,
     ) -> Result<JsonValue> {
-        Err(GlinerError::inference(
-            "Structure extraction inference is not implemented yet",
-        ))
+        // Requires span representations.
+        let span_outputs = match output.span_representations.as_ref() {
+            Some(v) if sample_idx < v.len() => &v[sample_idx],
+            _ => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let schema_tokens_embs = match output
+            .schema_embeddings
+            .get(sample_idx)
+            .and_then(|s| s.get(schema_idx))
+        {
+            Some(v) if !v.is_empty() => v,
+            _ => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let schema_tokens = match batch.schema_tokens(sample_idx, schema_idx) {
+            Some(v) => v,
+            None => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        // Structure fields are tokens that follow [C].
+        let mut field_names = Vec::new();
+        let mut field_emb_indices = Vec::new();
+        let mut special_token_counter = 0usize;
+        for (i, token) in schema_tokens.iter().enumerate() {
+            if token.starts_with('[') && token.ends_with(']') {
+                if token == "[C]" && i + 1 < schema_tokens.len() {
+                    field_names.push(schema_tokens[i + 1].clone());
+                    field_emb_indices.push(special_token_counter);
+                }
+                special_token_counter += 1;
+            }
+        }
+        if field_names.is_empty() {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+
+        let hidden_size = span_outputs.span_rep.dims().get(2).copied().unwrap_or(0);
+        if hidden_size == 0 {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+
+        let mut field_emb_data: Vec<f32> = Vec::with_capacity(field_names.len() * hidden_size);
+        for &emb_idx in &field_emb_indices {
+            if emb_idx < schema_tokens_embs.len() {
+                let emb = &schema_tokens_embs[emb_idx];
+                if let Ok(data) = emb.flatten_all() {
+                    if let Ok(vec) = data.to_vec1::<f32>() {
+                        field_emb_data.extend_from_slice(&vec);
+                    }
+                }
+            } else {
+                field_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+            }
+        }
+
+        let field_embs_tensor = match Tensor::from_vec(
+            field_emb_data,
+            (field_names.len(), hidden_size),
+            &output.device,
+        ) {
+            Ok(t) => t,
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let pred_count = Self::predicted_count(output, batch, sample_idx, schema_idx, schema_tokens_embs, &self.model);
+        let struct_proj = match self.model.count_embed.forward(&field_embs_tensor, pred_count) {
+            Ok(out) => out.embeddings,
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let struct_proj_data: Vec<f32> = match struct_proj.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let span_rep_data: Vec<f32> = match span_outputs.span_rep.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let mask_data: Vec<u32> = match span_outputs.span_mask.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+        let spans_idx_data: Vec<u32> = match span_outputs.spans_idx.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Array(Vec::new())),
+        };
+
+        let mask_dims = span_outputs.span_mask.dims();
+        if mask_dims.len() != 2 {
+            return Ok(JsonValue::Array(Vec::new()));
+        }
+        let mask_seq_len = mask_dims[0];
+        let mask_max_width = mask_dims[1];
+        let max_width = span_outputs.span_rep.dims().get(1).copied().unwrap_or(mask_max_width);
+        let total_spans = mask_seq_len * mask_max_width;
+
+        let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
+        let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
+        let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
+
+        let mut instances = Vec::new();
+        for inst in 0..pred_count {
+            let mut instance = serde_json::Map::new();
+
+            for (field_idx, field_name) in field_names.iter().enumerate() {
+                let mut spans = Self::collect_scored_spans(
+                    &span_rep_data,
+                    &struct_proj_data,
+                    &mask_data,
+                    &spans_idx_data,
+                    mask_seq_len,
+                    mask_max_width,
+                    max_width,
+                    hidden_size,
+                    field_names.len(),
+                    inst,
+                    field_idx,
+                    total_spans,
+                    text_tokens,
+                    start_mappings,
+                    end_mappings,
+                    threshold,
+                );
+
+                let formatted = Self::format_spans(&mut spans, include_confidence, include_spans);
+                instance.insert(field_name.clone(), formatted);
+            }
+
+            let has_content = instance.values().any(|v| match v {
+                JsonValue::Array(arr) => !arr.is_empty(),
+                JsonValue::Null => false,
+                _ => true,
+            });
+            if has_content {
+                instances.push(JsonValue::Object(instance));
+            }
+        }
+
+        Ok(JsonValue::Array(instances))
+    }
+
+    fn predicted_count(
+        output: &crate::model::ExtractorOutput,
+        _batch: &PreprocessedBatch,
+        sample_idx: usize,
+        schema_idx: usize,
+        schema_tokens_embs: &[Tensor],
+        model: &Extractor,
+    ) -> usize {
+        if let Some(all_counts) = &output.count_predictions {
+            if let Some(sample_counts) = all_counts.get(sample_idx) {
+                if let Some(count) = sample_counts.get(schema_idx) {
+                    return (*count).clamp(1, 20);
+                }
+            }
+        }
+
+        if let Some(p_token_emb) = schema_tokens_embs.first() {
+            if let Ok(out) = model.count_pred.predict_count(p_token_emb) {
+                return out.count.clamp(1, 20);
+            }
+        }
+
+        5
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_scored_spans(
+        span_rep_data: &[f32],
+        struct_proj_data: &[f32],
+        mask_data: &[u32],
+        spans_idx_data: &[u32],
+        mask_seq_len: usize,
+        mask_max_width: usize,
+        max_width: usize,
+        hidden_size: usize,
+        num_fields: usize,
+        count_idx: usize,
+        field_idx: usize,
+        total_spans: usize,
+        text_tokens: &[String],
+        start_mappings: &[usize],
+        end_mappings: &[usize],
+        threshold: f32,
+    ) -> Vec<(String, f32, usize, usize)> {
+        let mut spans = Vec::new();
+        for i in 0..mask_seq_len {
+            for w in 0..mask_max_width {
+                let mask_idx = i * mask_max_width + w;
+                if mask_idx >= total_spans || mask_idx >= mask_data.len() || mask_data[mask_idx] == 0 {
+                    continue;
+                }
+
+                let span_start = i * max_width * hidden_size + w * hidden_size;
+                if span_start + hidden_size > span_rep_data.len() {
+                    continue;
+                }
+                let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
+
+                let struct_start = (count_idx * num_fields + field_idx) * hidden_size;
+                if struct_start + hidden_size > struct_proj_data.len() {
+                    continue;
+                }
+                let struct_vec = &struct_proj_data[struct_start..struct_start + hidden_size];
+
+                let score: f32 = span_rep_vec
+                    .iter()
+                    .zip(struct_vec.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                let prob = 1.0 / (1.0 + (-score).exp());
+                if prob < threshold {
+                    continue;
+                }
+
+                let spans_flat_idx = i * max_width * 2 + w * 2;
+                if spans_flat_idx + 1 >= spans_idx_data.len() {
+                    continue;
+                }
+                let start_pos = spans_idx_data[spans_flat_idx] as usize;
+                let end_pos = spans_idx_data[spans_flat_idx + 1] as usize;
+
+                let entity_text = if start_pos < text_tokens.len() && end_pos < text_tokens.len() {
+                    text_tokens[start_pos..=end_pos].join(" ")
+                } else if start_pos < text_tokens.len() {
+                    text_tokens[start_pos].clone()
+                } else {
+                    continue;
+                };
+                let char_start = if start_pos < start_mappings.len() { start_mappings[start_pos] } else { 0 };
+                let char_end = if end_pos < end_mappings.len() { end_mappings[end_pos] } else { char_start + entity_text.len() };
+                spans.push((entity_text, prob, char_start, char_end));
+            }
+        }
+        spans
+    }
+
+    fn format_spans(
+        spans: &mut Vec<(String, f32, usize, usize)>,
+        include_confidence: bool,
+        include_spans: bool,
+    ) -> JsonValue {
+        if spans.is_empty() {
+            return JsonValue::Array(Vec::new());
+        }
+
+        spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut selected: Vec<(String, f32, usize, usize)> = Vec::new();
+        for candidate in spans.iter() {
+            let overlap = selected.iter().any(|s| !(candidate.3 <= s.2 || candidate.2 >= s.3));
+            if !overlap {
+                selected.push(candidate.clone());
+            }
+        }
+
+        let formatted = selected
+            .into_iter()
+            .map(|(text, conf, start, end)| {
+                if include_spans && include_confidence {
+                    serde_json::json!({ "text": text, "confidence": conf, "start": start, "end": end })
+                } else if include_spans {
+                    serde_json::json!({ "text": text, "start": start, "end": end })
+                } else if include_confidence {
+                    serde_json::json!({ "text": text, "confidence": conf })
+                } else {
+                    JsonValue::String(text)
+                }
+            })
+            .collect();
+
+        JsonValue::Array(formatted)
     }
 
     fn is_multilabel_task(batch: &PreprocessedBatch, sample_idx: usize, schema_idx: usize) -> bool {

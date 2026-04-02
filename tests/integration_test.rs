@@ -128,6 +128,63 @@ fn test_classification_pipeline() {
     );
 }
 
+/// Test relation extraction pipeline returns relation_extraction payload.
+#[test]
+fn test_relation_extraction_pipeline() {
+    use gliner2_rust::{GLiNER2, ExtractorConfig};
+
+    let config = ExtractorConfig::new("bert-base-uncased");
+    let engine = GLiNER2::new(&config).expect("Failed to create engine");
+
+    let result = engine.extract_relations(
+        "Apple CEO Tim Cook visited Cupertino.",
+        &["works_for"],
+        None,
+        true,
+        true,
+    );
+    assert!(result.is_ok(), "Relation extraction failed: {:?}", result.err());
+
+    let result = result.unwrap();
+    assert!(
+        result.get("relation_extraction").is_some(),
+        "Expected relation_extraction key, got: {result:?}"
+    );
+}
+
+/// Test structure extraction pipeline returns named structure payload.
+#[test]
+fn test_structure_extraction_pipeline() {
+    use gliner2_rust::{GLiNER2, ExtractorConfig, SchemaBuilder};
+
+    let config = ExtractorConfig::new("bert-base-uncased");
+    let engine = GLiNER2::new(&config).expect("Failed to create engine");
+
+    let schema = SchemaBuilder::new()
+        .structure("product_info")
+            .field("name").done_field()
+            .field("company").done_field()
+            .done_structure()
+        .build()
+        .expect("Failed to build structure schema");
+
+    let result = engine.extract(
+        "Apple announced iPhone in Cupertino.",
+        &schema,
+        0.5,
+        true,
+        true,
+        None,
+    );
+    assert!(result.is_ok(), "Structure extraction failed: {:?}", result.err());
+
+    let result = result.unwrap();
+    assert!(
+        result.get("product_info").is_some(),
+        "Expected product_info key, got: {result:?}"
+    );
+}
+
 /// Test that the tokenizer produces valid token IDs.
 #[test]
 fn test_tokenizer_produces_valid_ids() {
