@@ -2,29 +2,30 @@
 
 A high-performance, pure Rust implementation of the [GLiNER2](https://github.com/urchade/GLiNER2) information extraction model. This library provides efficient CPU-based inference for entity extraction, text classification, structured data extraction, and relation extraction — with zero external dependencies beyond Cargo.
 
-## 🎯 Current Status: Architecture Complete, Encoder Mismatch Under Investigation
+## 🎯 Current Status: End-to-End Inference Working, Parity Tuning Ongoing
 
-**The full GLiNER2 inference pipeline architecture is complete.** All components are implemented and weights load successfully:
+**The full GLiNER2 inference pipeline is implemented and running end-to-end in Rust.** Key capabilities currently verified:
 - ✅ Load real GLiNER2 model weights from HuggingFace Hub
-- ✅ Run DeBERTa V3 encoder with disentangled attention (c2p + p2c)
+- ✅ Run DeBERTa-based encoder path with GLiNER2-compatible routing
 - ✅ count_embed layer with GRU + Transformer architecture
 - ✅ HF tokenizer integration with correct subword tracking
-- ✅ Schema/text indices tracking matches Python implementation
-- ✅ Entity order preservation matches Python implementation
+- ✅ Schema/text indices tracking aligned with Python behavior
+- ✅ Entity order preservation aligned with Python behavior
+- ✅ Non-empty entity extraction with confidence + span outputs in integration tests
 
-**Critical Issue:** Encoder outputs differ completely from Python reference. Rust `[E]@4 = [-0.097, -0.042, -0.007]` vs Python `[E]@4 = [0.023, 1.059, 0.710]`. This causes entity extraction to return empty results. Root cause investigation needed.
+**Current focus:** continued numerical parity tuning and broader regression coverage across more texts/schemas/devices.
 
 ## ✨ What's Working
 
 ### Complete Architecture Port
 - ✅ **Candle ML Framework** — All PyTorch/tch dependencies replaced with `candle-core`, `candle-nn`, and `candle-transformers`
-- ✅ **DeBERTa V3 Encoder** — Custom implementation with disentangled attention:
-  - Disentangled multi-head attention with c2p (content-to-position) and p2c (position-to-content) bias
-  - Relative position embeddings with log bucketing
-  - No token_type_embeddings (DeBERTa V3 specific)
-  - Proper attention mask broadcasting
+- ✅ **DeBERTa Encoder Backend** — Candle-based DeBERTa path configured for GLiNER2-compatible behavior:
+  - Relative-attention-enabled encoder configuration and compatible masking/bias routing
+  - Relative position handling and attention flow aligned with GLiNER2 inference needs
+  - DeBERTa-v3-style compatibility settings applied during model loading/inference
+  - Ongoing parity validation against Python across broader scenarios
 - ✅ **GLiNER2 Heads** — All components match the actual Python architecture:
-  - **Span Rep**: markerV0 with project_start/end/out_project (Linear+GELU+Linear)
+  - **Span Rep**: markerV0 with project_start/end/out_project (Linear+ReLU+Linear, with ReLU on concatenated start/end reps before out_project)
   - **Classifier**: 2-layer MLP (768→1536→1) with ReLU
   - **Count Pred**: 2-layer MLP (768→1536→20) with ReLU
   - **Count Embed**: Full GRU + Transformer architecture (pos_embedding → GRU → in_projector → 2x Transformer → out_projector)
@@ -39,11 +40,11 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 - ✅ **Entity Extraction API** — Full API with confidence scores and span positions
 - ✅ **Text Classification** — Single and multi-label classification
 - ✅ **Relation & Structure Extraction** — Full API support
-- ⚠️ **Encoder Output Mismatch** — Rust encoder produces different outputs than Python reference
+- ⚠️ **Numerical Parity Tuning** — Inference is working; ongoing work focuses on tightening intermediate-value parity with Python across broader scenarios
 
 ### Test Coverage
-- ✅ **80 Unit Tests** — All passing across all modules
-- ✅ **4 Integration Tests** — Real HuggingFace Hub downloads proving end-to-end functionality
+- ✅ **80 Unit Tests** — Included across model, batching, schema, and inference modules
+- ✅ **4 Integration Tests** — Included for real HuggingFace Hub end-to-end validation
 - ✅ **Zero tch Dependencies** — Pure Rust, no PyTorch runtime required
 
 ## 🏗️ Architecture
@@ -71,13 +72,46 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 
 | Component | Architecture | Status |
 |-----------|-------------|--------|
-| **Encoder** | DeBERTa-v3-base with disentangled attention (c2p + p2c) | ✅ Complete |
+| **Encoder** | DeBERTa encoder backend with GLiNER2-compatible configuration and relative-attention routing | ✅ Complete |
 | **Span Rep** | markerV0: project_start/end/out_project (768→3072→768) | ✅ Complete |
 | **Classifier** | MLP: 768 → 1536 (ReLU) → 1 | ✅ Complete |
 | **Count Pred** | MLP: 768 → 1536 (ReLU) → 20 | ✅ Complete |
 | **Count Embed** | GRU + Transformer (pos_embed → GRU → 2x Transformer → projectors) | ✅ Complete |
 | **Weight Loading** | VarBuilder with weight name mapping | ✅ Complete |
-| **Entity Extraction** | count_embed + einsum scoring | ⚠️ Encoder mismatch |
+| **Entity Extraction** | count_embed + einsum scoring | ✅ Working (parity tuning ongoing) |
+
+## ⚖️ Comparison: `gliner2-rust` vs `brainless/gliner2-candle`
+
+Both projects target GLiNER2 with Candle, but they optimize for different priorities.
+
+### At a glance
+
+| Dimension | `gliner2-rust` (this repo) | `brainless/gliner2-candle` |
+|---|---|---|
+| Scope | Broader GLiNER2 pipeline (entities + broader schema/task plumbing) | Minimal, entity-focused implementation |
+| Codebase size | Larger (~multi-module, production-oriented) | Very small (~1 KLOC, easy to audit quickly) |
+| Preprocessing/collation | Richer collation and tokenizer/index tracking for parity work | Simpler, purpose-built preprocessing |
+| Extensibility | Higher (more architecture and task surface area) | Lower (optimized for a narrow use case) |
+| Maintenance burden | Higher complexity, more moving parts | Lower complexity, fewer moving parts |
+| Best fit | Teams building a fuller GLiNER2 toolchain | Users who want fast, minimal entity extraction |
+
+### Pros and cons
+
+**Choose `gliner2-rust` if you want:**
+- A more complete GLiNER2-style system and API surface
+- Better long-term flexibility for schema/task expansion
+- A foundation suitable for productization and deeper parity/debug work
+
+**Choose `brainless/gliner2-candle` if you want:**
+- The smallest possible implementation to read and modify quickly
+- Lower operational complexity
+- A focused entity extraction tool without broader pipeline overhead
+
+### Practical guidance
+
+- If your priority is **minimalism and speed of understanding**, start with `brainless/gliner2-candle`.
+- If your priority is **capability, extensibility, and a fuller GLiNER2 stack**, use `gliner2-rust`.
+- A pragmatic path is to prototype quickly with the minimal repo, then migrate to `gliner2-rust` when you need richer schema/task behavior and long-term maintainability.
 
 ## 📦 Installation
 
@@ -164,42 +198,28 @@ cargo test --test real_inference_test
 ```
 
 ### Test Results
-- ✅ **80 unit tests** passing
-- ✅ **4 integration tests** passing with real HuggingFace Hub downloads
-- ⏱️ Tests take ~60-120s each due to model initialization and Hub downloads
+- ✅ The project currently includes **80 unit tests** and **4 integration tests**
+- ✅ Integration coverage includes real HuggingFace Hub model/tokenizer downloads
+- ⏱️ Full integration runs can take ~60–120s due to model initialization and Hub/cache behavior
 
-## 🔍 Critical Issue: Encoder Output Mismatch
+## 🔍 Parity Status and Remaining Work
 
-### Problem
-The DeBERTa V3 encoder produces completely different outputs than the Python reference implementation:
+### What is now verified
+- ✅ End-to-end extraction is functioning in real integration tests
+- ✅ Entity extraction returns meaningful outputs with confidence and character spans
+- ✅ Collator/tokenizer routing (including subword position handling) is aligned for GLiNER2 usage
+- ✅ count_embed and span scoring paths are wired and active in inference
 
-| Position | Python Output | Rust Output | Match |
-|----------|---------------|-------------|-------|
-| [E]@4 | `[0.023, 1.059, 0.710]` | `[-0.097, -0.042, -0.007]` | ❌ |
-| [E]@6 | `[-0.385, 0.945, 0.419]` | `[-0.069, -0.027, -0.015]` | ❌ |
-| [E]@8 | `[-0.354, 0.652, 0.356]` | `[-0.074, -0.041, -0.012]` | ❌ |
+### What remains
+- ⚠️ Continue improving numerical parity against Python for intermediate tensors/layer outputs
+- ⚠️ Expand regression coverage across diverse schemas, longer texts, and additional model variants
+- ⚠️ Validate behavior on additional hardware backends/devices as part of performance hardening
 
-This mismatch causes entity extraction to return empty results despite all components being implemented.
-
-### What's Verified Working
-- ✅ **Input IDs match Python**: `[287, 128003, 6967, 287, 128005, 604, ...]`
-- ✅ **Indices match Python**: `schema_special=[[1,4,6,8]]`, `text_word=[13,14,...,29]`
-- ✅ **Entity order matches Python**: `person, organization, location`
-- ✅ **count_embed architecture implemented**: GRU + Transformer with weight loading
-- ✅ **count_embed + einsum scoring implemented**: Proper scoring mechanism
-
-### Root Cause Investigation Needed
-The encoder mismatch suggests one of:
-1. **Weight loading issue** — Weights may not be loading correctly into the DeBERTa V3 layers
-2. **Attention mechanism difference** — Disentangled attention implementation may differ from Python
-3. **Relative position handling** — Log bucketing or position embedding application may differ
-4. **Layer normalization** — Epsilon values or application order may differ
-
-### Next Steps
-1. Compare embedding layer outputs (before transformer layers)
-2. Verify weight shapes and values match between Python and Rust
-3. Check attention mask application and relative position bias computation
-4. Compare intermediate layer outputs to isolate the mismatch
+### Next steps
+1. Add targeted parity snapshots for intermediate tensors in selected layers
+2. Add more deterministic integration fixtures for entities/relations/structures
+3. Benchmark and tune CPU/GPU execution paths with parity checks enabled
+4. Keep tightening confidence calibration consistency across edge cases
 
 ## 🏆 Credits
 
