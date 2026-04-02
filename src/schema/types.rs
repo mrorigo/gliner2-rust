@@ -100,7 +100,7 @@ impl RegexValidator {
     /// Create a new regex validator.
     pub fn new(pattern: impl Into<String>) -> Result<Self> {
         let pattern = pattern.into();
-        regex::Regex::new(&pattern).map_err(|e| {
+        regex::Regex::new(&pattern).map_err(|_e| {
             GlinerError::regex_validator(format!("Invalid regex pattern: {pattern}"))
         })?;
         Ok(Self {

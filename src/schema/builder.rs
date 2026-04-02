@@ -207,7 +207,7 @@ impl SchemaBuilder {
     ///     .unwrap();
     /// ```
     pub fn classification(
-        mut self,
+        self,
         task: impl Into<String>,
         labels: Vec<String>,
     ) -> ClassificationBuilder {
@@ -252,7 +252,7 @@ impl SchemaBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
-    pub fn structure(mut self, name: impl Into<String>) -> StructureBuilder {
+    pub fn structure(self, name: impl Into<String>) -> StructureBuilder {
         let name = name.into();
         StructureBuilder {
             parent: Box::new(self),
