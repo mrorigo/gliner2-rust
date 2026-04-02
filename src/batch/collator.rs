@@ -289,23 +289,23 @@ impl ExtractorCollator {
             // Use HF tokenizer for proper token IDs
             // Build the full text sequence: schema_tokens + [SEP] + text_tokens + [SEP]
             let mut full_text_parts: Vec<String> = Vec::new();
-            let mut schema_token_positions: Vec<Vec<usize>> = Vec::new();
 
-            // Add schema tokens
+            // Track which schema each schema token belongs to
+            let mut schema_token_boundaries: Vec<(usize, usize)> = Vec::new(); // (start_pos, schema_idx)
+            let mut pos = 0;
             for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
-                let schema_start_pos = full_text_parts.len();
                 for token in schema_tokens {
                     full_text_parts.push(token.clone());
+                    schema_token_boundaries.push((pos, schema_idx));
+                    pos += 1;
                 }
-                let schema_end_pos = full_text_parts.len();
-                schema_special_indices.push((schema_start_pos..schema_end_pos).collect());
             }
 
             // Add separator
+            let schema_end_pos = full_text_parts.len();
             full_text_parts.push("[SEP]".to_string());
 
             // Add text tokens
-            let text_start_pos = full_text_parts.len();
             for token in truncated_tokens {
                 full_text_parts.push(token.clone());
             }
@@ -318,25 +318,61 @@ impl ExtractorCollator {
             let (encoded_ids, _) = self.encode_text_with_subwords(&full_text)?;
             input_ids = encoded_ids;
 
-            // Map text word indices to subword positions
-            for (token_idx, _) in truncated_tokens.iter().enumerate() {
-                // Find the first subword position for this text token
-                // The text starts after schema tokens + [SEP]
-                let text_offset = schema_result.schema_tokens_list.iter().map(|s| s.len()).sum::<usize>() + 1; // +1 for [SEP]
-                // With HF tokenizer, each whitespace token may become multiple subwords
-                // We track the first subword position for each text token
-                if let Some(hf_tok) = &self.hf_tokenizer {
-                    if let Ok(encoding) = hf_tok.encode(full_text.as_str(), true) {
-                        let offsets = encoding.get_offsets();
-                        // Find subword positions that correspond to text tokens
-                        let mut current_text_token_idx = 0;
-                        for (subword_idx, (sub_start, sub_end)) in offsets.iter().enumerate() {
-                            if current_text_token_idx < truncated_tokens.len() {
-                                let token_text = &truncated_tokens[current_text_token_idx];
-                                // Check if this subword overlaps with the current text token
-                                if sub_start < sub_end {
-                                    text_word_indices.push(subword_idx as i64);
-                                    current_text_token_idx += 1;
+            // Use HF tokenizer to get subword positions
+            if let Some(hf_tok) = &self.hf_tokenizer {
+                if let Ok(encoding) = hf_tok.encode(full_text.as_str(), true) {
+                    let tokens = encoding.get_tokens();
+                    let offsets = encoding.get_offsets();
+
+                    // Initialize schema_special_indices for each schema
+                    for _ in 0..schema_result.schema_tokens_list.len() {
+                        schema_special_indices.push(Vec::new());
+                    }
+
+                    // Track position in schema tokens
+                    let mut schema_token_pos = 0;
+                    let mut found_sep = false;
+                    let mut last_text_orig: Option<usize> = None;
+
+                    for (subword_idx, (token, (sub_start, sub_end))) in tokens.iter().zip(offsets.iter()).enumerate() {
+                        if *token == "[SEP]" && !found_sep {
+                            // This is the separator between schema and text
+                            found_sep = true;
+                            schema_token_pos = schema_end_pos + 1; // Skip past the SEP
+                            continue;
+                        }
+
+                        if !found_sep {
+                            // Schema token - check if it's a special token
+                            if token.starts_with('[') && token.ends_with(']') {
+                                // Find which schema this position belongs to
+                                for &(spos, sidx) in &schema_token_boundaries {
+                                    if spos == schema_token_pos {
+                                        schema_special_indices[sidx].push(subword_idx);
+                                        break;
+                                    }
+                                }
+                            }
+                            schema_token_pos += 1;
+                        } else if *token != "[SEP]" {
+                            // Text token - track first subword position for each whitespace token
+                            if sub_start < sub_end {
+                                // Find which whitespace token this subword belongs to
+                                // by checking character offsets
+                                for (ws_idx, ws_token) in truncated_tokens.iter().enumerate() {
+                                    // The text starts after schema + SEP in the full_text
+                                    // We need to find which whitespace token this subword corresponds to
+                                    if last_text_orig.is_none() || last_text_orig != Some(ws_idx) {
+                                        // Check if this subword's character position falls within this whitespace token
+                                        // The text portion starts after the schema tokens + " [SEP] "
+                                        let text_start_char = full_text_parts[..schema_end_pos].join(" ").len() + 6; // " [SEP] "
+                                        let adjusted_start = sub_start.saturating_sub(text_start_char);
+                                        if adjusted_start < ws_token.len() {
+                                            text_word_indices.push(subword_idx as i64);
+                                            last_text_orig = Some(ws_idx);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -375,6 +411,7 @@ impl ExtractorCollator {
             input_ids.push(self.token_to_id("[SEP]"));
         }
 
+        // Debug output
         Ok(ProcessedSample {
             input_ids,
             mapped_indices,

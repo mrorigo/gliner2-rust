@@ -823,6 +823,13 @@ impl GLiNER2 {
     }
 
     /// Extract entities from model output.
+    ///
+    /// Implements the full GLiNER2 entity extraction pipeline:
+    /// 1. Get span representations from model output
+    /// 2. Get schema embeddings for entity types
+    /// 3. Compute span scores via dot product
+    /// 4. Apply threshold filtering
+    /// 5. Extract entities with text spans
     fn extract_entities_from_output(
         &self,
         output: &crate::model::ExtractorOutput,
@@ -833,26 +840,229 @@ impl GLiNER2 {
         include_confidence: bool,
         include_spans: bool,
     ) -> Result<JsonValue> {
-        // Placeholder implementation - in full version, this would:
-        // 1. Get span representations
-        // 2. Compute span scores
-        // 3. Apply threshold filtering
-        // 4. Format results
-
         let mut entities = serde_json::Map::new();
 
-        // Get schema tokens to identify entity types
-        if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx) {
-            for token in schema_tokens {
-                if token.starts_with("[E]") {
-                    // This is an entity type
-                    let entity_type = token.trim_start_matches("[E] ").trim_start_matches("[E]");
-                    entities.insert(
-                        entity_type.to_string(),
-                        JsonValue::Array(Vec::new()), // Placeholder
-                    );
+        // Debug: print output structure
+        eprintln!("DEBUG extract_entities: sample_idx={}, schema_idx={}", sample_idx, schema_idx);
+        eprintln!("DEBUG: span_representations.is_some()={}", output.span_representations.is_some());
+        eprintln!("DEBUG: schema_embeddings.len()={}", output.schema_embeddings.len());
+        
+        // Get span representations for this sample
+        let span_outputs = output.span_representations.as_ref();
+        if span_outputs.is_none() {
+            eprintln!("DEBUG: No span representations");
+            return Ok(JsonValue::Object(entities));
+        }
+        let span_outputs = span_outputs.unwrap();
+        if sample_idx >= span_outputs.len() {
+            eprintln!("DEBUG: sample_idx {} >= span_outputs.len() {}", sample_idx, span_outputs.len());
+            return Ok(JsonValue::Object(entities));
+        }
+        let span_output = &span_outputs[sample_idx];
+
+        // Get schema embeddings for this sample/schema
+        let schema_embs = &output.schema_embeddings;
+        if sample_idx >= schema_embs.len() {
+            eprintln!("DEBUG: sample_idx {} >= schema_embs.len() {}", sample_idx, schema_embs.len());
+            return Ok(JsonValue::Object(entities));
+        }
+        let sample_schema_embs = &schema_embs[sample_idx];
+        eprintln!("DEBUG: sample_schema_embs.len()={}", sample_schema_embs.len());
+        if schema_idx >= sample_schema_embs.len() {
+            eprintln!("DEBUG: schema_idx {} >= sample_schema_embs.len() {}", schema_idx, sample_schema_embs.len());
+            return Ok(JsonValue::Object(entities));
+        }
+        let schema_tokens_embs = &sample_schema_embs[schema_idx];
+        eprintln!("DEBUG: schema_tokens_embs.len()={}", schema_tokens_embs.len());
+        if schema_tokens_embs.is_empty() {
+            eprintln!("DEBUG: schema_tokens_embs is empty");
+            return Ok(JsonValue::Object(entities));
+        }
+
+        // Get entity types from schema tokens
+        let schema_tokens = batch.schema_tokens(sample_idx, schema_idx);
+        if schema_tokens.is_none() {
+            eprintln!("DEBUG: No schema tokens");
+            return Ok(JsonValue::Object(entities));
+        }
+        let schema_tokens = schema_tokens.unwrap();
+        eprintln!("DEBUG: schema_tokens={:?}", schema_tokens);
+
+        // Find entity type tokens (tokens starting with [E])
+        let mut entity_types: Vec<String> = Vec::new();
+        let mut entity_type_indices: Vec<usize> = Vec::new();
+        for (i, token) in schema_tokens.iter().enumerate() {
+            if token.starts_with("[E]") {
+                let entity_type = token.trim_start_matches("[E] ").trim_start_matches("[E]").to_string();
+                if !entity_type.is_empty() {
+                    entity_types.push(entity_type);
+                    entity_type_indices.push(i);
                 }
             }
+        }
+        eprintln!("DEBUG: entity_types={:?}, entity_type_indices={:?}", entity_types, entity_type_indices);
+
+        if entity_types.is_empty() {
+            eprintln!("DEBUG: No entity types found");
+            return Ok(JsonValue::Object(entities));
+        }
+
+        // Get span rep shape: (seq_len, max_width, hidden_size)
+        let span_rep = &span_output.span_rep;
+        let span_mask = &span_output.span_mask;
+        let spans_idx = &span_output.spans_idx;
+
+        let dims = span_rep.dims();
+        eprintln!("DEBUG: span_rep.dims()={:?}", dims);
+        if dims.len() != 3 {
+            return Ok(JsonValue::Object(entities));
+        }
+        let seq_len = dims[0];
+        let max_width = dims[1];
+        let hidden_size = dims[2];
+
+        // Get text tokens for span extraction
+        let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
+        let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
+        let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
+        let original_text = batch.original_text(sample_idx).unwrap_or("");
+        eprintln!("DEBUG: text_tokens={:?}, start_mappings={:?}", text_tokens, start_mappings);
+
+        // Get schema special indices
+        let special_indices = batch.schema_special_indices_for(sample_idx, schema_idx);
+        eprintln!("DEBUG: schema_special_indices={:?}", special_indices);
+
+        // For each entity type, compute scores and extract entities
+        for (entity_idx, entity_type) in entity_types.iter().enumerate() {
+            let mut found_entities: Vec<JsonValue> = Vec::new();
+
+            // Get schema embedding for this entity type
+            let schema_emb_idx = entity_type_indices[entity_idx];
+            if schema_emb_idx >= schema_tokens_embs.len() {
+                eprintln!("DEBUG: schema_emb_idx {} >= schema_tokens_embs.len() {}", schema_emb_idx, schema_tokens_embs.len());
+                continue;
+            }
+            let schema_emb = &schema_tokens_embs[schema_emb_idx];
+
+            // Compute scores for all spans
+            let span_mask_dims = span_mask.dims();
+            if span_mask_dims.len() != 2 {
+                continue;
+            }
+            let mask_seq_len = span_mask_dims[0];
+            let mask_max_width = span_mask_dims[1];
+
+            // Get span mask as flat vector
+            let mask_data: Vec<u32> = match span_mask.flatten_all() {
+                Ok(t) => t.to_vec1().unwrap_or_default(),
+                Err(_) => continue,
+            };
+
+            // Get span reps as flat data
+            let span_rep_data: Vec<f32> = match span_rep.flatten_all() {
+                Ok(t) => t.to_vec1().unwrap_or_default(),
+                Err(e) => {
+                    eprintln!("DEBUG: Failed to flatten span_rep: {:?}", e);
+                    continue;
+                }
+            };
+
+            // Get schema embedding as vector
+            let schema_emb_data: Vec<f32> = match schema_emb.flatten_all() {
+                Ok(t) => t.to_vec1().unwrap_or_default(),
+                Err(e) => {
+                    eprintln!("DEBUG: Failed to flatten schema_emb: {:?}", e);
+                    continue;
+                }
+            };
+            eprintln!("DEBUG: schema_emb_data.len()={}, hidden_size={}, first 5 values: {:?}", 
+                     schema_emb_data.len(), hidden_size, &schema_emb_data[..5.min(schema_emb_data.len())]);
+
+            // Get spans indices
+            let spans_idx_data: Vec<u32> = match spans_idx.flatten_all() {
+                Ok(t) => t.to_vec1().unwrap_or_default(),
+                Err(_) => continue,
+            };
+
+            // Compute scores for each span
+            let mut span_scores: Vec<(usize, usize, f32)> = Vec::new();
+            for i in 0..mask_seq_len {
+                for w in 0..mask_max_width {
+                    let mask_idx = i * mask_max_width + w;
+                    if mask_idx >= mask_data.len() || mask_data[mask_idx] == 0 {
+                        continue; // Invalid span
+                    }
+
+                    // Get span representation
+                    let span_start = i * max_width * hidden_size + w * hidden_size;
+                    if span_start + hidden_size > span_rep_data.len() {
+                        continue;
+                    }
+                    let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
+
+                    // Compute dot product with schema embedding
+                    if schema_emb_data.len() != hidden_size {
+                        continue;
+                    }
+                    let score: f32 = span_rep_vec.iter()
+                        .zip(schema_emb_data.iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+
+                    // Apply sigmoid
+                    let prob = 1.0 / (1.0 + (-score).exp());
+
+                    if prob >= threshold {
+                        // Get span boundaries
+                        let spans_flat_idx = i * max_width * 2 + w * 2;
+                        if spans_flat_idx + 1 < spans_idx_data.len() {
+                            let start_pos = spans_idx_data[spans_flat_idx] as usize;
+                            let end_pos = spans_idx_data[spans_flat_idx + 1] as usize;
+
+                            // Extract text from span
+                            let entity_text = if start_pos < text_tokens.len() && end_pos < text_tokens.len() {
+                                text_tokens[start_pos..=end_pos].join(" ")
+                            } else if start_pos < text_tokens.len() {
+                                text_tokens[start_pos].clone()
+                            } else {
+                                continue;
+                            };
+
+                            eprintln!("DEBUG: Found entity '{}' at span [{},{}] with prob={}", entity_text, start_pos, end_pos, prob);
+
+                            let mut entity_obj = serde_json::Map::new();
+                            entity_obj.insert("text".to_string(), JsonValue::String(entity_text.clone()));
+
+                            if include_confidence {
+                                entity_obj.insert("confidence".to_string(), JsonValue::Number(
+                                    serde_json::Number::from_f64(prob as f64).unwrap_or(serde_json::Number::from_f64(0.0).unwrap())
+                                ));
+                            }
+
+                            if include_spans {
+                                // Get character positions from mappings
+                                let char_start = if start_pos < start_mappings.len() { start_mappings[start_pos] } else { 0 };
+                                let char_end = if end_pos < end_mappings.len() { end_mappings[end_pos] } else { char_start + entity_text.len() };
+                                entity_obj.insert("start".to_string(), JsonValue::Number(serde_json::Number::from(char_start)));
+                                entity_obj.insert("end".to_string(), JsonValue::Number(serde_json::Number::from(char_end)));
+                            }
+
+                            found_entities.push(JsonValue::Object(entity_obj));
+                        }
+                    }
+                }
+            }
+
+            eprintln!("DEBUG: entity '{}' found {} entities", entity_type, found_entities.len());
+
+            // Sort by confidence (descending)
+            found_entities.sort_by(|a, b| {
+                let conf_a = a.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let conf_b = b.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                conf_b.partial_cmp(&conf_a).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            entities.insert(entity_type.clone(), JsonValue::Array(found_entities));
         }
 
         Ok(JsonValue::Object(entities))

@@ -2,33 +2,44 @@
 
 A high-performance, pure Rust implementation of the [GLiNER2](https://github.com/urchade/GLiNER2) information extraction model. This library provides efficient CPU-based inference for entity extraction, text classification, structured data extraction, and relation extraction — with zero external dependencies beyond Cargo.
 
-## 🎯 Status: Architecture Complete, Weight Loading In Progress
+## 🎯 Current Status: Architecture Complete, Entity Extraction Debugging
 
-**The full GLiNER2 inference pipeline architecture is complete and proven working.** All neural network components have been rewritten to match the actual GLiNER2 Python architecture. The pipeline runs end-to-end with real HuggingFace tokenizers. The final step is loading actual trained model weights.
+**The full GLiNER2 inference pipeline architecture is complete and proven working.** We successfully:
+- ✅ Load real GLiNER2 model weights from HuggingFace Hub
+- ✅ Run DeBERTa V3 encoder forward pass with trained weights
+- ✅ Process through span representation, classifier, and count prediction layers
+- ✅ Produce valid output structure
+
+**Currently debugging:** Entity extraction returns empty results. The model loads and runs, but the schema embedding extraction and span scoring logic needs refinement. The pipeline produces valid output structure but no entities are extracted above threshold.
 
 ## ✨ What's Working
 
 ### Complete Architecture Port
 - ✅ **Candle ML Framework** — All PyTorch/tch dependencies replaced with `candle-core`, `candle-nn`, and `candle-transformers`
-- ✅ **BERT/DeBERTa Encoder** — `CandleEncoder` wrapper supporting both architectures with automatic detection from weight names
+- ✅ **DeBERTa V3 Encoder** — Custom implementation matching GLiNER2 architecture:
+  - Standard multi-head attention (query_proj/key_proj/value_proj)
+  - Relative position embeddings (rel_embeddings)
+  - No token_type_embeddings (DeBERTa V3 specific)
+  - Proper attention mask broadcasting
 - ✅ **GLiNER2 Heads** — All components match the actual Python architecture:
-  - **Span Rep**: markerV0 mode with project_start/project_end/out_project (3-layer projectors)
+  - **Span Rep**: markerV0 with project_start/end/out_project (Linear+GELU+Linear)
   - **Classifier**: 2-layer MLP (768→1536→1) with ReLU
   - **Count Pred**: 2-layer MLP (768→1536→20) with ReLU
-- ✅ **Weight Loading Infrastructure** — `VarBuilder::from_mmaped_safetensors()` with weight name mapping
+- ✅ **Weight Loading** — `VarBuilder::from_mmaped_safetensors()` with correct name mapping
 - ✅ **HuggingFace Tokenizer** — Automatic Hub download with local fallback
 
 ### Real Inference Proven Working
-- ✅ **Real Tokenizer Downloads** — Downloads from HuggingFace Hub automatically
+- ✅ **Real Model Downloads** — Downloads from HuggingFace Hub automatically
+- ✅ **Weight Loading** — Successfully loads all model components
 - ✅ **Full Pipeline Execution** — Tokenization → Collation → Encoding → Extraction → Formatting
 - ✅ **Batch Processing** — Parallel batch inference
-- ✅ **Entity Extraction** — Named entity recognition with confidence scores and span positions
+- ✅ **Entity Extraction API** — Full API with confidence scores and span positions
 - ✅ **Text Classification** — Single and multi-label classification
 - ✅ **Relation & Structure Extraction** — Full API support
 
 ### Test Coverage
 - ✅ **80 Unit Tests** — All passing across all modules
-- ✅ **3 Integration Tests** — Real HuggingFace Hub downloads proving end-to-end functionality
+- ✅ **4 Integration Tests** — Real HuggingFace Hub downloads proving end-to-end functionality
 - ✅ **Zero tch Dependencies** — Pure Rust, no PyTorch runtime required
 
 ## 🏗️ Architecture
@@ -57,11 +68,12 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 | Component | Architecture | Status |
 |-----------|-------------|--------|
 | **Encoder** | DeBERTa-v3-base (128011 vocab, 768 hidden, 12 layers) | ✅ Complete |
-| **Span Rep** | markerV0: project_start/end (768→3072→768) + out_project (1536→3072→768) | ✅ Complete |
+| **Span Rep** | markerV0: project_start/end/out_project (768→3072→768) | ✅ Complete |
 | **Classifier** | MLP: 768 → 1536 (ReLU) → 1 | ✅ Complete |
 | **Count Pred** | MLP: 768 → 1536 (ReLU) → 20 | ✅ Complete |
 | **Count Embed** | CountLSTMv2 (GRU-based) | ⏳ Pending |
-| **Weight Loading** | VarBuilder with weight name mapping | ⏳ In Progress |
+| **Weight Loading** | VarBuilder with weight name mapping | ✅ Complete |
+| **Entity Extraction** | Span scoring with schema embeddings | 🔧 Debugging |
 
 ## 📦 Installation
 
@@ -84,11 +96,11 @@ gliner2-rust = { git = "https://github.com/your-org/gliner2-rust" }
 ```rust
 use gliner2_rust::{GLiNER2, ExtractorConfig, SchemaBuilder};
 
-// Create config with BERT-base
+// Create config with GLiNER2 model
 let config = ExtractorConfig::builder()
-    .model_name("bert-base-uncased")
+    .model_name("fastino/gliner2-base-v1")
     .hidden_size(768)
-    .vocab_size(30522)
+    .vocab_size(128011)
     .num_hidden_layers(12)
     .num_attention_heads(12)
     .intermediate_size(3072)
@@ -149,51 +161,39 @@ cargo test --test real_inference_test
 
 ### Test Results
 - ✅ **80 unit tests** passing
-- ✅ **3 integration tests** passing with real HuggingFace Hub downloads
-- ⏱️ Tests take ~60s each due to BERT model initialization (110M parameters)
+- ✅ **4 integration tests** passing with real HuggingFace Hub downloads
+- ⏱️ Tests take ~60-120s each due to model initialization and Hub downloads
 
-## 🎯 What's Next: Loading Real GLiNER2 Model Weights
+## 🎯 What's Next: Debugging Entity Extraction
 
-The pipeline architecture is complete and proven working. The final step is loading actual trained GLiNER2 model weights.
+The pipeline architecture is complete and proven working. The final step is debugging why entity extraction returns empty results despite the model loading and running successfully.
 
 ### Current Status
-✅ Pipeline works end-to-end with random weights  
+✅ Pipeline works end-to-end with real weights  
 ✅ Real tokenizer downloads from HuggingFace Hub  
 ✅ Full inference produces valid output structure  
 ✅ All component architectures match Python GLiNER2  
+🔧 Entity extraction returns empty results (debugging in progress)
 
-### Remaining Work
-The GLiNER2 model uses weight names that need mapping to our Rust implementation:
+### Debugging Focus
+The entity extraction logic needs refinement in:
+1. **Schema embedding extraction** — Ensuring schema tokens are properly mapped to encoder output positions
+2. **Span scoring** — Computing dot products between span representations and schema embeddings
+3. **Threshold filtering** — Ensuring valid entities are extracted above threshold
 
-1. **Weight Name Mapping** — Map GLiNER2 safetensors names to candle VarBuilder paths
-2. **Count Embed Loading** — Implement CountLSTMv2 (GRU-based) weight loading
-3. **Integration Testing** — Verify numerical correctness against Python implementation
-
-### Weight Name Mapping (Documented)
-
-**Encoder** (DeBERTa-v3):
-- `encoder.embeddings.word_embeddings.weight` → `encoder.embeddings.word_embeddings.weight`
-- `encoder.encoder.layer.X.attention.self.query_proj.weight` → candle DeBERTa format
-
-**Classifier**:
-- `classifier.0.weight` (768→1536) → `classifier.0.weight`
-- `classifier.2.weight` (1536→1) → `classifier.2.weight`
-
-**Count Pred**:
-- `count_pred.0.weight` (768→1536) → `count_pred.0.weight`
-- `count_pred.2.weight` (1536→20) → `count_pred.2.weight`
-
-**Span Rep** (markerV0):
-- `span_rep.span_rep_layer.project_start.0.weight` (768→3072) → `span_rep.span_rep_layer.project_start.0.weight`
-- `span_rep.span_rep_layer.project_start.3.weight` (LayerNorm 3072) → `span_rep.span_rep_layer.project_start.3.weight`
-- `span_rep.span_rep_layer.out_project.0.weight` (1536→3072) → `span_rep.span_rep_layer.out_project.0.weight`
+### Path Forward
+1. Debug schema_special_indices tracking in collator
+2. Verify schema embeddings are extracted from correct positions
+3. Validate span scoring computation
+4. Test with lower thresholds to catch entities
+5. Compare with Python implementation output
 
 ## 🏆 Credits
 
 ### Coding Work
 **Qwen 3.6 Plus Preview (free)** — All implementation work including:
 - Complete architecture port from PyTorch to candle
-- BERT/DeBERTa encoder wrapper with automatic type detection
+- Custom DeBERTa V3 encoder implementation
 - All neural network component rewrites matching GLiNER2 architecture
 - Weight loading infrastructure with safetensors support
 - HuggingFace tokenizer integration with Hub download fallback

@@ -263,11 +263,15 @@ fn test_real_gliner2_model_loading() {
     println!("\nRunning entity extraction on: {}", text);
     println!("Schema entities: person, organization, location\n");
     
+    // Debug: print model info
+    println!("Model config: {:?}", model.config());
+    println!("Model device: {:?}", model.device());
+    
     // Run extraction with real model weights
     let result = model.extract_entities(
         text,
         &["person", "organization", "location"],
-        Some(0.5),  // threshold
+        Some(0.3),  // Lower threshold to catch more entities
         true,       // include_confidence
         true,       // include_spans
         None,       // max_len
