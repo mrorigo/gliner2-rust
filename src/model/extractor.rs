@@ -36,6 +36,7 @@ use crate::config::ExtractorConfig;
 use crate::error::{GlinerError, Result};
 use crate::model::candle_encoder::CandleEncoder;
 use crate::model::classifier::ClassifierHead;
+use crate::model::count_embed::CountEmbedLayer;
 use crate::model::count_pred::CountPredictionLayer;
 use crate::model::loading::ModelLoader;
 use crate::model::span_rep::{SpanRepOutput, SpanRepresentationLayer};
@@ -151,6 +152,8 @@ pub struct Extractor {
     pub span_rep: SpanRepresentationLayer,
     /// Count prediction layer.
     pub count_pred: CountPredictionLayer,
+    /// Count embedding layer for entity scoring.
+    pub count_embed: CountEmbedLayer,
     /// Classifier head.
     pub classifier: ClassifierHead,
 }
@@ -204,6 +207,8 @@ impl Extractor {
         // Initialize submodules
         let span_rep = SpanRepresentationLayer::from_config(config, device.clone())?;
         let count_pred = CountPredictionLayer::from_config(config, device.clone())?;
+        let count_embed = CountEmbedLayer::new(config.hidden_size, 20, device.clone())
+            .map_err(|e| GlinerError::model_loading(format!("Failed to initialize count_embed: {e}")))?;
         let classifier = ClassifierHead::from_config(config, device.clone())?;
 
         Ok(Self {
@@ -216,6 +221,7 @@ impl Extractor {
             encoder,
             span_rep,
             count_pred,
+            count_embed,
             classifier,
         })
     }

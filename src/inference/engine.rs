@@ -842,20 +842,13 @@ impl GLiNER2 {
     ) -> Result<JsonValue> {
         let mut entities = serde_json::Map::new();
 
-        // Debug: print output structure
-        eprintln!("DEBUG extract_entities: sample_idx={}, schema_idx={}", sample_idx, schema_idx);
-        eprintln!("DEBUG: span_representations.is_some()={}", output.span_representations.is_some());
-        eprintln!("DEBUG: schema_embeddings.len()={}", output.schema_embeddings.len());
-
         // Get span representations for this sample
         let span_outputs = output.span_representations.as_ref();
         if span_outputs.is_none() {
-            eprintln!("DEBUG: No span representations");
             return Ok(JsonValue::Object(entities));
         }
         let span_outputs = span_outputs.unwrap();
         if sample_idx >= span_outputs.len() {
-            eprintln!("DEBUG: sample_idx {} >= span_outputs.len() {}", sample_idx, span_outputs.len());
             return Ok(JsonValue::Object(entities));
         }
         let span_output = &span_outputs[sample_idx];
@@ -863,47 +856,36 @@ impl GLiNER2 {
         // Get schema embeddings for this sample/schema
         let schema_embs = &output.schema_embeddings;
         if sample_idx >= schema_embs.len() {
-            eprintln!("DEBUG: sample_idx {} >= schema_embs.len() {}", sample_idx, schema_embs.len());
             return Ok(JsonValue::Object(entities));
         }
         let sample_schema_embs = &schema_embs[sample_idx];
-        eprintln!("DEBUG: sample_schema_embs.len()={}", sample_schema_embs.len());
         if schema_idx >= sample_schema_embs.len() {
-            eprintln!("DEBUG: schema_idx {} >= sample_schema_embs.len() {}", schema_idx, sample_schema_embs.len());
             return Ok(JsonValue::Object(entities));
         }
         let schema_tokens_embs = &sample_schema_embs[schema_idx];
-        eprintln!("DEBUG: schema_tokens_embs.len()={}", schema_tokens_embs.len());
         if schema_tokens_embs.is_empty() {
-            eprintln!("DEBUG: schema_tokens_embs is empty");
             return Ok(JsonValue::Object(entities));
         }
 
         // Get entity types from schema tokens
         let schema_tokens = batch.schema_tokens(sample_idx, schema_idx);
         if schema_tokens.is_none() {
-            eprintln!("DEBUG: No schema tokens");
             return Ok(JsonValue::Object(entities));
         }
         let schema_tokens = schema_tokens.unwrap();
-        eprintln!("DEBUG: schema_tokens={:?}", schema_tokens);
 
         // Find entity type tokens (tokens following [E] markers)
         // Schema format: ["(", "[P]", "entities", "(", "[E]", "location", "[E]", "organization", "[E]", "person", ")", ")"]
-        // Special tokens are tracked in schema_special_indices, so we need to map [E] positions to special token indices
         let mut entity_types: Vec<String> = Vec::new();
         let mut entity_type_indices: Vec<usize> = Vec::new();
         let mut special_token_counter = 0;
         for (i, token) in schema_tokens.iter().enumerate() {
-            // Check if this is a special token (starts with '[' and ends with ']')
             if token.starts_with('[') && token.ends_with(']') {
                 if token == "[E]" {
-                    // The entity type is the next token after [E]
                     if i + 1 < schema_tokens.len() {
                         let entity_type = schema_tokens[i + 1].clone();
                         if !entity_type.is_empty() {
                             entity_types.push(entity_type);
-                            // Map to the index in schema_tokens_embs (which only contains special token embeddings)
                             entity_type_indices.push(special_token_counter);
                         }
                     }
@@ -911,22 +893,9 @@ impl GLiNER2 {
                 special_token_counter += 1;
             }
         }
-        eprintln!("DEBUG: entity_types={:?}, entity_type_indices={:?}", entity_types, entity_type_indices);
-        eprintln!("DEBUG: schema_tokens_embs.len()={}", schema_tokens_embs.len());
 
         if entity_types.is_empty() {
-            eprintln!("DEBUG: No entity types found");
             return Ok(JsonValue::Object(entities));
-        }
-
-        // Debug: print first few values of each schema embedding to see if they differ
-        for (emb_idx, emb) in schema_tokens_embs.iter().enumerate() {
-            if let Ok(data) = emb.flatten_all() {
-                if let Ok(vec) = data.to_vec1::<f32>() {
-                    let first_5: Vec<f32> = vec.iter().take(5).cloned().collect();
-                    eprintln!("DEBUG: schema_tokens_embs[{}] first 5: {:?}", emb_idx, first_5);
-                }
-            }
         }
 
         // Get span rep shape: (seq_len, max_width, hidden_size)
@@ -935,7 +904,6 @@ impl GLiNER2 {
         let spans_idx = &span_output.spans_idx;
 
         let dims = span_rep.dims();
-        eprintln!("DEBUG: span_rep.dims()={:?}", dims);
         if dims.len() != 3 {
             return Ok(JsonValue::Object(entities));
         }
@@ -947,12 +915,32 @@ impl GLiNER2 {
         let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
         let start_mappings = batch.sample_start_mapping(sample_idx).unwrap_or(&[]);
         let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
-        let original_text = batch.original_text(sample_idx).unwrap_or("");
-        eprintln!("DEBUG: text_tokens={:?}, start_mappings={:?}", text_tokens, start_mappings);
 
-        // Get schema special indices
-        let special_indices = batch.schema_special_indices_for(sample_idx, schema_idx);
-        eprintln!("DEBUG: schema_special_indices={:?}", special_indices);
+        // Get span mask dimensions
+        let span_mask_dims = span_mask.dims();
+        if span_mask_dims.len() != 2 {
+            return Ok(JsonValue::Object(entities));
+        }
+        let mask_seq_len = span_mask_dims[0];
+        let mask_max_width = span_mask_dims[1];
+
+        // Get span mask as flat vector
+        let mask_data: Vec<u32> = match span_mask.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
+
+        // Get span reps as flat data
+        let span_rep_data: Vec<f32> = match span_rep.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
+
+        // Get spans indices
+        let spans_idx_data: Vec<u32> = match spans_idx.flatten_all() {
+            Ok(t) => t.to_vec1().unwrap_or_default(),
+            Err(_) => return Ok(JsonValue::Object(entities)),
+        };
 
         // For each entity type, compute scores and extract entities
         for (entity_idx, entity_type) in entity_types.iter().enumerate() {
@@ -961,53 +949,21 @@ impl GLiNER2 {
             // Get schema embedding for this entity type
             let schema_emb_idx = entity_type_indices[entity_idx];
             if schema_emb_idx >= schema_tokens_embs.len() {
-                eprintln!("DEBUG: schema_emb_idx {} >= schema_tokens_embs.len() {}", schema_emb_idx, schema_tokens_embs.len());
                 continue;
             }
             let schema_emb = &schema_tokens_embs[schema_emb_idx];
 
-            // Compute scores for all spans
-            let span_mask_dims = span_mask.dims();
-            if span_mask_dims.len() != 2 {
-                continue;
-            }
-            let mask_seq_len = span_mask_dims[0];
-            let mask_max_width = span_mask_dims[1];
-
-            // Get span mask as flat vector
-            let mask_data: Vec<u32> = match span_mask.flatten_all() {
-                Ok(t) => t.to_vec1().unwrap_or_default(),
-                Err(_) => continue,
-            };
-
-            // Get span reps as flat data
-            let span_rep_data: Vec<f32> = match span_rep.flatten_all() {
-                Ok(t) => t.to_vec1().unwrap_or_default(),
-                Err(e) => {
-                    eprintln!("DEBUG: Failed to flatten span_rep: {:?}", e);
-                    continue;
-                }
-            };
-
             // Get schema embedding as vector
             let schema_emb_data: Vec<f32> = match schema_emb.flatten_all() {
                 Ok(t) => t.to_vec1().unwrap_or_default(),
-                Err(e) => {
-                    eprintln!("DEBUG: Failed to flatten schema_emb: {:?}", e);
-                    continue;
-                }
-            };
-            eprintln!("DEBUG: schema_emb_data.len()={}, hidden_size={}, first 5 values: {:?}",
-                     schema_emb_data.len(), hidden_size, &schema_emb_data[..5.min(schema_emb_data.len())]);
-
-            // Get spans indices
-            let spans_idx_data: Vec<u32> = match spans_idx.flatten_all() {
-                Ok(t) => t.to_vec1().unwrap_or_default(),
                 Err(_) => continue,
             };
 
-            // Compute scores for each span
-            let mut span_scores: Vec<(usize, usize, f32)> = Vec::new();
+            if schema_emb_data.len() != hidden_size {
+                continue;
+            }
+
+            // Compute scores for each span using dot product with temperature scaling
             for i in 0..mask_seq_len {
                 for w in 0..mask_max_width {
                     let mask_idx = i * mask_max_width + w;
@@ -1023,18 +979,14 @@ impl GLiNER2 {
                     let span_rep_vec = &span_rep_data[span_start..span_start + hidden_size];
 
                     // Compute dot product with schema embedding
-                    if schema_emb_data.len() != hidden_size {
-                        continue;
-                    }
-                    let score: f32 = span_rep_vec.iter()
+                    let raw_score: f32 = span_rep_vec.iter()
                         .zip(schema_emb_data.iter())
                         .map(|(a, b)| a * b)
                         .sum();
 
-                    // Debug: print raw scores for first few spans
-                    if i < 3 && w < 2 {
-                        eprintln!("DEBUG: span[{},{}] raw_score={}, prob_before_sigmoid_check={}", i, w, score, 1.0 / (1.0 + (-score).exp()));
-                    }
+                    // Apply temperature scaling: divide by sqrt(hidden_size)
+                    let temperature = (hidden_size as f32).sqrt();
+                    let score = raw_score / temperature;
 
                     // Apply sigmoid
                     let prob = 1.0 / (1.0 + (-score).exp());
@@ -1054,8 +1006,6 @@ impl GLiNER2 {
                             } else {
                                 continue;
                             };
-
-                            eprintln!("DEBUG: Found entity '{}' at span [{},{}] with prob={}", entity_text, start_pos, end_pos, prob);
 
                             let mut entity_obj = serde_json::Map::new();
                             entity_obj.insert("text".to_string(), JsonValue::String(entity_text.clone()));
@@ -1079,8 +1029,6 @@ impl GLiNER2 {
                     }
                 }
             }
-
-            eprintln!("DEBUG: entity '{}' found {} entities", entity_type, found_entities.len());
 
             // Sort by confidence (descending)
             found_entities.sort_by(|a, b| {
