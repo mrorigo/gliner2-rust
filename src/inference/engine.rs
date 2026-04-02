@@ -433,6 +433,7 @@ impl GLiNER2 {
     /// * `tasks` - Classification tasks (task name -> labels).
     /// * `threshold` - Confidence threshold.
     /// * `include_confidence` - Whether to include confidence scores.
+    /// * `max_len` - Maximum token length.
     ///
     /// # Returns
     ///
@@ -443,6 +444,7 @@ impl GLiNER2 {
         tasks: &[(String, Vec<String>)],
         threshold: Option<f32>,
         include_confidence: bool,
+        max_len: Option<usize>,
     ) -> Result<ExtractionResult> {
         let mut schema_builder = self.create_schema();
         for (task_name, labels) in tasks {
@@ -459,7 +461,7 @@ impl GLiNER2 {
             threshold.unwrap_or(self.default_threshold),
             include_confidence,
             false,
-            None,
+            max_len,
         )
     }
 
@@ -473,6 +475,7 @@ impl GLiNER2 {
     /// * `threshold` - Confidence threshold.
     /// * `num_workers` - Number of parallel workers.
     /// * `include_confidence` - Whether to include confidence scores.
+    /// * `max_len` - Maximum token length.
     ///
     /// # Returns
     ///
@@ -485,6 +488,7 @@ impl GLiNER2 {
         threshold: Option<f32>,
         num_workers: usize,
         include_confidence: bool,
+        max_len: Option<usize>,
     ) -> Result<BatchExtractionResult> {
         let mut schema_builder = self.create_schema();
         for (task_name, labels) in tasks {
@@ -503,7 +507,7 @@ impl GLiNER2 {
             num_workers,
             include_confidence,
             false,
-            None,
+            max_len,
         )
     }
 
@@ -520,6 +524,7 @@ impl GLiNER2 {
     /// * `threshold` - Confidence threshold.
     /// * `include_confidence` - Whether to include confidence scores.
     /// * `include_spans` - Whether to include character positions.
+    /// * `max_len` - Maximum token length.
     ///
     /// # Returns
     ///
@@ -531,6 +536,7 @@ impl GLiNER2 {
         threshold: Option<f32>,
         include_confidence: bool,
         include_spans: bool,
+        max_len: Option<usize>,
     ) -> Result<ExtractionResult> {
         let mut schema_builder = self.create_schema();
         for rel_type in relation_types {
@@ -544,7 +550,7 @@ impl GLiNER2 {
             threshold.unwrap_or(self.default_threshold),
             include_confidence,
             include_spans,
-            None,
+            max_len,
         )
     }
 
@@ -559,6 +565,7 @@ impl GLiNER2 {
     /// * `num_workers` - Number of parallel workers.
     /// * `include_confidence` - Whether to include confidence scores.
     /// * `include_spans` - Whether to include character positions.
+    /// * `max_len` - Maximum token length.
     ///
     /// # Returns
     ///
@@ -572,6 +579,7 @@ impl GLiNER2 {
         num_workers: usize,
         include_confidence: bool,
         include_spans: bool,
+        max_len: Option<usize>,
     ) -> Result<BatchExtractionResult> {
         let mut schema_builder = self.create_schema();
         for rel_type in relation_types {
@@ -587,7 +595,7 @@ impl GLiNER2 {
             num_workers,
             include_confidence,
             include_spans,
-            None,
+            max_len,
         )
     }
 

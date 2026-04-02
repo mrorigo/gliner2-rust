@@ -372,6 +372,7 @@ fn test_python_reference_parity_fixtures() {
                     )],
                     Some(0.5),
                     class_multi_label,
+                    None,
                 )
                 .expect("rust classification failed")
         } else {
@@ -395,23 +396,16 @@ fn test_python_reference_parity_fixtures() {
                 .extract(class_text, &class_schema, 0.5, false, false, max_len)
                 .expect("rust classification failed")
         };
-        let rel_raw = {
-            let relation_schema = SchemaBuilder::new()
-                .relation("works_for")
-                .done()
-                .build()
-                .expect("failed to build rust relation schema");
-            engine
-                .extract(
-                    relations_text,
-                    &relation_schema,
-                    relation_threshold,
-                    false,
-                    false,
-                    max_len,
-                )
-                .expect("rust relation failed")
-        };
+        let rel_raw = engine
+            .extract_relations(
+                relations_text,
+                &["works_for"],
+                Some(relation_threshold),
+                false,
+                false,
+                max_len,
+            )
+            .expect("rust relation failed");
         let struct_schema = SchemaBuilder::new()
             .structure(structure_key)
             .field("name")

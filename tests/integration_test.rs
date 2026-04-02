@@ -112,7 +112,7 @@ fn test_classification_pipeline() {
         ("sentiment".to_string(), vec!["positive".to_string(), "negative".to_string()]),
     ];
 
-    let result = engine.classify_text("I love this product!", &tasks, None, false);
+    let result = engine.classify_text("I love this product!", &tasks, None, false, None);
     assert!(result.is_ok(), "Classification failed: {:?}", result.err());
 
     let result = result.unwrap();
@@ -142,6 +142,7 @@ fn test_relation_extraction_pipeline() {
         None,
         true,
         true,
+        None,
     );
     assert!(result.is_ok(), "Relation extraction failed: {:?}", result.err());
 

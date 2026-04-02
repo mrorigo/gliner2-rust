@@ -29,7 +29,6 @@ use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::batch::preprocessed::{PreprocessedBatch, TokenMapping};
 use crate::error::{GlinerError, Result};
-use crate::schema::types::{Schema, TaskType};
 use crate::tokenizer::WhitespaceTokenizer;
 
 /// Special tokens used in GLiNER2 schema encoding.
@@ -80,7 +79,7 @@ pub struct ExtractorCollator {
     /// HuggingFace tokenizer for token ID generation (optional).
     hf_tokenizer: Option<std::sync::Arc<HfTokenizer>>,
     /// Whether in training mode.
-    is_training: bool,
+    _is_training: bool,
     /// Maximum token length (None = no limit).
     max_len: Option<usize>,
 }
@@ -96,7 +95,7 @@ impl ExtractorCollator {
         Self {
             tokenizer,
             hf_tokenizer: None,
-            is_training,
+            _is_training: is_training,
             max_len: None,
         }
     }
@@ -116,7 +115,7 @@ impl ExtractorCollator {
         Self {
             tokenizer,
             hf_tokenizer: None,
-            is_training,
+            _is_training: is_training,
             max_len,
         }
     }
@@ -138,7 +137,7 @@ impl ExtractorCollator {
         Self {
             tokenizer,
             hf_tokenizer: Some(std::sync::Arc::new(hf_tokenizer)),
-            is_training,
+            _is_training: is_training,
             max_len,
         }
     }
