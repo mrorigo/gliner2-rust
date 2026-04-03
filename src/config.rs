@@ -172,7 +172,7 @@ impl std::str::FromStr for HiddenActivation {
 /// # Example
 ///
 /// ```
-/// use gliner2_rust::config::ExtractorConfig;
+/// use gliner2_rs::config::ExtractorConfig;
 ///
 /// // Create config with defaults for base model
 /// let config = ExtractorConfig::default();

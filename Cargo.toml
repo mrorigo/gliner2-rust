@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Rust implementation of GLiNER2 for efficient CPU-based information extraction"
 license = "Apache-2.0"
-repository = "https://github.com/your-org/gliner2-rust"
+repository = "https://github.com/mrorigo/gliner2-rust"
 keywords = ["nlp", "ner", "information-extraction", "transformer", "gliner"]
 categories = ["science", "text-processing"]
 

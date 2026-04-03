@@ -8,8 +8,8 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use gliner2_rust::GLiNER2;
-//! use gliner2_rust::schema::SchemaBuilder;
+//! use gliner2_rs::GLiNER2;
+//! use gliner2_rs::schema::SchemaBuilder;
 //!
 //! // Load model
 //! let model = GLiNER2::from_pretrained("fastino/gliner2-base-v1").await?;

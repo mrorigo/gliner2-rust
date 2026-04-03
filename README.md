@@ -83,13 +83,13 @@ A high-performance, pure Rust implementation of the [GLiNER2](https://github.com
 | **Weight Loading** | VarBuilder with weight name mapping | ✅ Complete |
 | **Entity Extraction** | count_embed + einsum scoring | ✅ Working (parity tuning ongoing) |
 
-## ⚖️ Comparison: `gliner2-rust` vs `brainless/gliner2-candle`
+## ⚖️ Comparison: `gliner2-rs` vs `brainless/gliner2-candle`
 
 Both projects target GLiNER2 with Candle, but they optimize for different priorities.
 
 ### At a glance
 
-| Dimension | `gliner2-rust` (this repo) | `brainless/gliner2-candle` |
+| Dimension | `gliner2-rs` (this repo) | `brainless/gliner2-candle` |
 |---|---|---|
 | Scope | Broader GLiNER2 pipeline (entities + broader schema/task plumbing) | Minimal, entity-focused implementation |
 | Codebase size | Larger (~multi-module, production-oriented) | Very small (~1 KLOC, easy to audit quickly) |
@@ -100,7 +100,7 @@ Both projects target GLiNER2 with Candle, but they optimize for different priori
 
 ### Pros and cons
 
-**Choose `gliner2-rust` if you want:**
+**Choose `gliner2-rs` if you want:**
 - A more complete GLiNER2-style system and API surface
 - Better long-term flexibility for schema/task expansion
 - A foundation suitable for productization and deeper parity/debug work
@@ -113,14 +113,14 @@ Both projects target GLiNER2 with Candle, but they optimize for different priori
 ### Practical guidance
 
 - If your priority is **minimalism and speed of understanding**, start with `brainless/gliner2-candle`.
-- If your priority is **capability, extensibility, and a fuller GLiNER2 stack**, use `gliner2-rust`.
-- A pragmatic path is to prototype quickly with the minimal repo, then migrate to `gliner2-rust` when you need richer schema/task behavior and long-term maintainability.
+- If your priority is **capability, extensibility, and a fuller GLiNER2 stack**, use `gliner2-rs`.
+- A pragmatic path is to prototype quickly with the minimal repo, then migrate to `gliner2-rs` when you need richer schema/task behavior and long-term maintainability.
 
 ## 📦 Installation
 
 ```toml
 [dependencies]
-gliner2-rust = { git = "https://github.com/your-org/gliner2-rust" }
+gliner2-rs = { git = "https://github.com/mrorigo/gliner2-rust" }
 ```
 
 ### Dependencies
@@ -135,7 +135,7 @@ gliner2-rust = { git = "https://github.com/your-org/gliner2-rust" }
 ### Basic Entity Extraction
 
 ```rust
-use gliner2_rust::{GLiNER2, ExtractorConfig, SchemaBuilder};
+use gliner2_rs::{GLiNER2, ExtractorConfig, SchemaBuilder};
 
 // Create config with GLiNER2 model
 let config = ExtractorConfig::builder()

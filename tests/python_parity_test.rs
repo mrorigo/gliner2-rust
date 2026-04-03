@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use gliner2_rust::schema::builder::SchemaBuilder;
-use gliner2_rust::{ExtractorConfig, GLiNER2};
+use gliner2_rs::schema::builder::SchemaBuilder;
+use gliner2_rs::{ExtractorConfig, GLiNER2};
 use serde_json::Value as JsonValue;
 
 fn find_snapshot_dir() -> PathBuf {

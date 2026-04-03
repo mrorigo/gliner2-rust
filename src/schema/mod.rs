@@ -7,8 +7,8 @@
 //! # Example
 //!
 //! ```
-//! use gliner2_rust::schema::SchemaBuilder;
-//! use gliner2_rust::schema::types::FieldDtype;
+//! use gliner2_rs::schema::SchemaBuilder;
+//! use gliner2_rs::schema::types::FieldDtype;
 //!
 //! let schema = SchemaBuilder::new()
 //!     .entity("person").description("Names of people").done()

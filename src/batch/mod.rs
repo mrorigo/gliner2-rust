@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use gliner2_rust::batch::{PreprocessedBatch, ExtractorCollator};
+//! use gliner2_rs::batch::{PreprocessedBatch, ExtractorCollator};
 //!
 //! let collator = ExtractorCollator::new(&processor, false);
 //! let batch = collator.collate(&samples);

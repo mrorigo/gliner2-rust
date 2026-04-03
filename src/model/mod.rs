@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use gliner2_rust::model::{Extractor, ExtractorConfig};
+//! use gliner2_rs::model::{Extractor, ExtractorConfig};
 //!
 //! let config = ExtractorConfig::default();
 //! let model = Extractor::new(&config)?;

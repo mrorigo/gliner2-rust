@@ -55,7 +55,7 @@ In `src/model/loading.rs`, weight application is mostly debug logging with no ac
 | **Maintenance** | Two APIs, two error models | One consistent API |
 | **Code to rewrite** | 0 lines (but permanent complexity) | ~2,500 lines (one-time cost) |
 | **CI/CD** | Complex (libtorch setup) | Simple (standard Rust CI) |
-| **User experience** | Set env vars, install PyTorch | `cargo add gliner2-rust` |
+| **User experience** | Set env vars, install PyTorch | `cargo add gliner2-rs` |
 
 **Decision**: All-candle is the right choice. The ~2,500 lines to rewrite is a one-time investment that eliminates permanent complexity and enables a truly portable Rust library.
 
@@ -457,7 +457,7 @@ impl ModelLoader {
 ## File Structure Changes
 
 ```
-gliner2-rust/
+gliner2-rs/
 ├── Cargo.toml                      # ✅ Remove tch, add candle deps
 ├── PLAN.md                         # ✅ Original plan (Phase 1 complete)
 ├── PLAN2.md                        # ✅ This file (Phase 2 plan)

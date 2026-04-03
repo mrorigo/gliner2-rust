@@ -19,8 +19,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use gliner2_rust::model::loading::ModelLoader;
-//! use gliner2_rust::config::ExtractorConfig;
+//! use gliner2_rs::model::loading::ModelLoader;
+//! use gliner2_rs::config::ExtractorConfig;
 //! use candle_core::Device;
 //!
 //! let config = ExtractorConfig::default();

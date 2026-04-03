@@ -220,7 +220,7 @@ GLiNER2 inference consists of three main stages:
 ## File Structure
 
 ```
-gliner2-rust/
+gliner2-rs/
 ├── Cargo.toml                      # ✅ Project configuration
 ├── PLAN.md                         # ✅ This file
 ├── src/

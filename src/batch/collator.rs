@@ -9,9 +9,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use gliner2_rust::batch::ExtractorCollator;
-//! use gliner2_rust::schema::Schema;
-//! use gliner2_rust::tokenizer::WhitespaceTokenizer;
+//! use gliner2_rs::batch::ExtractorCollator;
+//! use gliner2_rs::schema::Schema;
+//! use gliner2_rs::tokenizer::WhitespaceTokenizer;
 //!
 //! let tokenizer = WhitespaceTokenizer::new();
 //! let collator = ExtractorCollator::new(&tokenizer, false);
