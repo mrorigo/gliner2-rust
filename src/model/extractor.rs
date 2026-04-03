@@ -190,6 +190,11 @@ impl Extractor {
     /// # Returns
     ///
     /// A new `Extractor` with initialized submodules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if configuration validation fails or submodule
+    /// initialization fails.
     pub fn new(config: &ExtractorConfig) -> Result<Self> {
         config.validate()?;
 
@@ -246,7 +251,12 @@ impl Extractor {
     ///
     /// # Returns
     ///
-    /// `Ok(())` if weights were loaded successfully.
+    /// A newly initialized extractor configured for the given model name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the safetensors file cannot be loaded or model
+    /// components cannot be rebuilt.
     pub fn load_weights(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let loader = ModelLoader::new(&self.config, self.device.clone())?;
@@ -267,6 +277,10 @@ impl Extractor {
     /// # Returns
     ///
     /// `Ok(())` if weights were loaded successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model initialization fails.
     pub fn from_pretrained(model_name: &str) -> Result<Self> {
         let config = ExtractorConfig::new(model_name);
         let mut model = Self::new(&config)?;
@@ -301,6 +315,11 @@ impl Extractor {
     /// # Returns
     ///
     /// An `ExtractorOutput` containing all intermediate results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any encoder, embedding extraction, span, count, or
+    /// classification computation fails.
     pub fn forward(&self, batch: &PreprocessedBatch) -> Result<ExtractorOutput> {
         if batch.is_empty() {
             return Ok(ExtractorOutput::empty(self.device.clone()));
@@ -707,6 +726,10 @@ impl Extractor {
     /// # Returns
     ///
     /// Encoder output tensor of shape `(batch_size, seq_len, hidden_size)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the encoder forward pass fails.
     pub fn run_encoder(&self, input_ids: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
         self.encoder
             .forward(input_ids, attention_mask)
@@ -726,6 +749,10 @@ impl Extractor {
     /// # Returns
     ///
     /// A tuple of (token_embeddings, schema_embeddings).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if embedding extraction fails.
     pub fn extract_embeddings_fast(
         &self,
         _encoder_output: &Tensor,
@@ -750,6 +777,10 @@ impl Extractor {
     /// # Returns
     ///
     /// A tuple of (token_embeddings, schema_embeddings).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if embedding extraction fails.
     pub fn extract_embeddings_loop(
         &self,
         _encoder_output: &Tensor,
@@ -776,6 +807,11 @@ impl Extractor {
     }
 
     /// Quantize the model to FP16 for faster inference.
+    ///
+    /// # Errors
+    ///
+    /// This function currently does not fail, but returns `Result` for API
+    /// consistency with other model operations.
     pub fn quantize(&mut self) -> Result<()> {
         if self.config.use_fp16 || self.config.use_bf16 {
             return Ok(()); // Already quantized
@@ -787,6 +823,11 @@ impl Extractor {
     }
 
     /// Compile the model for faster inference (if supported).
+    ///
+    /// # Errors
+    ///
+    /// This function currently does not fail, but returns `Result` for API
+    /// consistency with other model operations.
     pub fn compile(&mut self) -> Result<()> {
         self.config.compile = true;
         // In a full implementation, this would use torch.compile or similar
@@ -855,6 +896,10 @@ impl ExtractorBuilder {
     }
 
     /// Build the extractor model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if extractor initialization fails.
     pub fn build(self) -> Result<Extractor> {
         Extractor::new(&self.config)
     }

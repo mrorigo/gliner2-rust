@@ -246,6 +246,20 @@ pub struct CountEmbedLayer {
 
 impl CountEmbedLayer {
     /// Create a new randomly initialized count embedding layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `hidden_size` - Entity embedding size.
+    /// * `max_count` - Maximum supported count positions.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized count embedding layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn new(hidden_size: usize, max_count: usize, device: Device) -> Result<Self> {
         let varmap = candle_nn::VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
@@ -253,6 +267,21 @@ impl CountEmbedLayer {
     }
 
     /// Create a count embedding layer from VarBuilder with loaded weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - VarBuilder rooted at the model weights.
+    /// * `hidden_size` - Entity embedding size.
+    /// * `max_count` - Maximum supported count positions.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A count embedding layer initialized from existing weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required weights are missing or invalid.
     pub fn from_var_builder(
         vb: VarBuilder,
         hidden_size: usize,
@@ -319,6 +348,10 @@ impl CountEmbedLayer {
     ///
     /// # Returns
     /// Count-aware entity embeddings, shape (pred_count, num_entity_types, hidden)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor operations fail.
     pub fn forward(&self, entity_embs: &Tensor, pred_count: usize) -> Result<CountEmbedOutput> {
         let num_entity_types = entity_embs.dims()[0];
         let actual_count = pred_count.min(20);

@@ -78,6 +78,21 @@ impl Clone for SpanRepresentationLayer {
 }
 
 impl SpanRepresentationLayer {
+    /// Create a new randomly initialized span representation layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `hidden_size` - Token embedding size.
+    /// * `max_width` - Maximum span width in tokens.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized span representation layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn new(hidden_size: usize, max_width: usize, device: Device) -> Result<Self> {
         let varmap = candle_nn::VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
@@ -136,10 +151,39 @@ impl SpanRepresentationLayer {
         })
     }
 
+    /// Create a span representation layer from an extractor configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized span representation layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn from_config(config: &ExtractorConfig, device: Device) -> Result<Self> {
         Self::new(config.hidden_size, config.max_width, device)
     }
 
+    /// Create a span representation layer from a `VarBuilder` with loaded weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - VarBuilder rooted at the model weights.
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A span representation layer initialized from existing weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required weights are missing or invalid.
     pub fn from_var_builder(
         vb: VarBuilder,
         config: &ExtractorConfig,
@@ -188,6 +232,19 @@ impl SpanRepresentationLayer {
             .map_err(|e| GlinerError::model_loading(format!("out_project_1 failed: {e}")))
     }
 
+    /// Compute span representations for one token sequence.
+    ///
+    /// # Arguments
+    ///
+    /// * `token_embs` - Token embeddings with shape `(seq_len, hidden_size)`.
+    ///
+    /// # Returns
+    ///
+    /// Span representations, indices, and validity mask.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input dimensions are invalid or tensor operations fail.
     pub fn forward(&self, token_embs: &Tensor) -> Result<SpanRepOutput> {
         let dims = token_embs.dims();
         if dims.len() != 2 {
@@ -283,6 +340,19 @@ impl SpanRepresentationLayer {
         })
     }
 
+    /// Compute span representations for a batch of token sequences.
+    ///
+    /// # Arguments
+    ///
+    /// * `token_embs_list` - Per-sample token embedding tensors.
+    ///
+    /// # Returns
+    ///
+    /// Span representation outputs for each sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any sample fails span representation computation.
     pub fn forward_batch(&self, token_embs_list: &[Tensor]) -> Result<Vec<SpanRepOutput>> {
         token_embs_list
             .iter()

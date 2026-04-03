@@ -94,6 +94,10 @@ impl Default for RegexValidator {
 
 impl RegexValidator {
     /// Create a new regex validator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the regex pattern is invalid.
     pub fn new(pattern: impl Into<String>) -> Result<Self> {
         let pattern = pattern.into();
         regex::Regex::new(&pattern).map_err(|_e| {
@@ -106,6 +110,10 @@ impl RegexValidator {
     }
 
     /// Validate text against the pattern.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored regex pattern is invalid.
     pub fn validate(&self, text: &str) -> Result<bool> {
         let re = regex::Regex::new(&self.pattern)
             .map_err(|e| GlinerError::regex_validator(format!("Invalid regex: {}", e)))?;
@@ -498,6 +506,11 @@ impl Schema {
     }
 
     /// Validate the schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required schema fields are missing or thresholds are
+    /// out of range.
     pub fn validate(&self) -> Result<()> {
         if self.is_empty() {
             return Err(GlinerError::invalid_schema(
@@ -794,6 +807,10 @@ impl Schema {
     }
 
     /// Create a schema from a dictionary (Python-compatible format).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if parsed schema content fails validation.
     pub fn from_dict(dict: &serde_json::Value) -> Result<Self> {
         let mut schema = Self::new();
 

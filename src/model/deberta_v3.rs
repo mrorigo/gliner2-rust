@@ -507,6 +507,20 @@ pub struct DebertaV3Model {
 }
 
 impl DebertaV3Model {
+    /// Load a DeBERTa V3 model from a `VarBuilder`.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - VarBuilder rooted at encoder weights.
+    /// * `config` - DeBERTa model configuration.
+    ///
+    /// # Returns
+    ///
+    /// A loaded DeBERTa V3 model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required weights are missing or invalid.
     pub fn load(vb: VarBuilder, config: &DebertaV3Config) -> Result<Self> {
         let embeddings = DebertaV3Embeddings::load(vb.pp("embeddings"), config)?;
         let encoder = DebertaV3Encoder::load(vb.pp("encoder"), config)?;
@@ -530,6 +544,21 @@ impl DebertaV3Model {
         })
     }
 
+    /// Run a forward pass through the DeBERTa V3 encoder.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_ids` - Token IDs tensor.
+    /// * `token_type_ids` - Token type IDs (unused for DeBERTa V3).
+    /// * `attention_mask` - Optional attention mask.
+    ///
+    /// # Returns
+    ///
+    /// Encoder output embeddings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor operations fail.
     pub fn forward(
         &self,
         input_ids: &Tensor,

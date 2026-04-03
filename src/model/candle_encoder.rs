@@ -69,6 +69,10 @@ impl EncoderType {
     ///
     /// Reads the safetensors header to get weight names and detects the encoder type
     /// based on DeBERTa-specific patterns (e.g., `key_proj`, `query_proj`, `rel_embeddings`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the safetensors file cannot be read or parsed.
     pub fn from_safetensors_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
         use std::io::Read;
         let path = path.as_ref();
@@ -150,6 +154,10 @@ impl CandleEncoder {
     /// # Returns
     ///
     /// A new `CandleEncoder` with uninitialized weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoder initialization fails.
     pub fn new(config: &ExtractorConfig, device: Device) -> Result<Self> {
         let encoder_type = EncoderType::from_model_name(&config.model_name);
         let hidden_size = config.hidden_size;
@@ -179,6 +187,10 @@ impl CandleEncoder {
     /// # Returns
     ///
     /// A new `CandleEncoder` with weights loaded from the VarBuilder.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoder construction fails for the selected backend.
     pub fn from_var_builder(
         vb: VarBuilder,
         config: &ExtractorConfig,
@@ -221,6 +233,10 @@ impl CandleEncoder {
     /// # Returns
     ///
     /// A new `CandleEncoder` with weights loaded from the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if safetensors loading fails or encoder construction fails.
     pub fn from_safetensors(
         config: &ExtractorConfig,
         path: impl AsRef<Path>,
@@ -310,6 +326,10 @@ impl CandleEncoder {
     /// # Returns
     ///
     /// Token embeddings of shape `(batch_size, seq_len, hidden_size)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor creation fails or the backend forward pass fails.
     pub fn forward(&self, input_ids: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
         let token_type_ids = Tensor::zeros_like(input_ids).map_err(|e| {
             GlinerError::model_loading(format!("Failed to create token type IDs: {e}"))
@@ -351,6 +371,11 @@ impl CandleEncoder {
     /// # Returns
     ///
     /// `Ok(())` if weights were loaded successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the safetensors file cannot be loaded or model
+    /// reconstruction fails.
     pub fn load_weights(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 

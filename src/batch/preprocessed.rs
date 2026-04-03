@@ -233,6 +233,10 @@ impl PreprocessedBatch {
     /// # Returns
     ///
     /// A new `PreprocessedBatch` with pinned tensors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor cloning or optional tensor handling fails.
     pub fn pin_memory(&self) -> Result<Self> {
         let pin_tensor = |tensor: &Tensor| -> Result<Tensor> {
             // Note: candle doesn't have a direct pin_memory() method.
@@ -274,6 +278,10 @@ impl PreprocessedBatch {
     /// # Returns
     ///
     /// The field value as a `JsonValue`, or an error if the field doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `key` is unknown or serialization fails.
     pub fn get_field(&self, key: &str) -> Result<JsonValue> {
         match key {
             "input_ids" => Ok(JsonValue::String(format!(
@@ -636,6 +644,11 @@ impl PreprocessedBatchBuilder {
     }
 
     /// Build the batch, returning an error if required fields are missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required tensors are missing or tensor batch sizes do
+    /// not match.
     pub fn build(self) -> Result<PreprocessedBatch> {
         let input_ids = self
             .input_ids

@@ -52,6 +52,20 @@ impl Clone for ClassifierHead {
 }
 
 impl ClassifierHead {
+    /// Create a new randomly initialized classifier head.
+    ///
+    /// # Arguments
+    ///
+    /// * `hidden_size` - Input embedding size.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized classifier head.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn new(hidden_size: usize, device: Device) -> Result<Self> {
         let varmap = candle_nn::VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
@@ -71,10 +85,39 @@ impl ClassifierHead {
         })
     }
 
+    /// Create a classifier head from an extractor configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized classifier head.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn from_config(config: &ExtractorConfig, device: Device) -> Result<Self> {
         Self::new(config.hidden_size, device)
     }
 
+    /// Create a classifier head from a `VarBuilder` with loaded weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - VarBuilder rooted at the model weights.
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A classifier head initialized from existing weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required weights are missing or invalid.
     pub fn from_var_builder(
         vb: VarBuilder,
         config: &ExtractorConfig,
@@ -98,6 +141,19 @@ impl ClassifierHead {
         })
     }
 
+    /// Run the classifier forward pass.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - Input tensor with trailing hidden dimension.
+    ///
+    /// # Returns
+    ///
+    /// Logits tensor with the last singleton dimension removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor operations fail.
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let x = self.layer1.forward(x).map_err(|e| {
             GlinerError::model_loading(format!("Classifier layer1 forward failed: {e}"))

@@ -57,6 +57,21 @@ impl Clone for CountPredictionLayer {
 }
 
 impl CountPredictionLayer {
+    /// Create a new randomly initialized count prediction layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `hidden_size` - Input embedding size.
+    /// * `max_count` - Number of count classes.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized count prediction layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn new(hidden_size: usize, max_count: usize, device: Device) -> Result<Self> {
         let varmap = candle_nn::VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
@@ -77,10 +92,39 @@ impl CountPredictionLayer {
         })
     }
 
+    /// Create a count prediction layer from an extractor configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A newly initialized count prediction layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layer initialization fails.
     pub fn from_config(config: &ExtractorConfig, device: Device) -> Result<Self> {
         Self::new(config.hidden_size, 20, device)
     }
 
+    /// Create a count prediction layer from a `VarBuilder` with loaded weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `vb` - VarBuilder rooted at the model weights.
+    /// * `config` - Extractor configuration.
+    /// * `device` - Target device for model parameters.
+    ///
+    /// # Returns
+    ///
+    /// A count prediction layer initialized from existing weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required weights are missing or invalid.
     pub fn from_var_builder(
         vb: VarBuilder,
         config: &ExtractorConfig,
@@ -106,6 +150,19 @@ impl CountPredictionLayer {
         })
     }
 
+    /// Predict instance count logits and the argmax count.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema_emb` - Schema embedding tensor.
+    ///
+    /// # Returns
+    ///
+    /// Count prediction logits and decoded count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor operations fail.
     pub fn predict_count(&self, schema_emb: &Tensor) -> Result<CountPredictionOutput> {
         let x = self.layer1.forward(schema_emb).map_err(|e| {
             GlinerError::model_loading(format!("CountPred layer1 forward failed: {e}"))
