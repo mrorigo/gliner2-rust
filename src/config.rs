@@ -331,6 +331,10 @@ impl ExtractorConfig {
     }
 
     /// Load config from a JSON file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or JSON parsing fails.
     pub fn from_file(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let content = std::fs::read_to_string(&path).map_err(|e| GlinerError::io(&path, e))?;
@@ -340,6 +344,10 @@ impl ExtractorConfig {
     }
 
     /// Save config to a JSON file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization fails or the file cannot be written.
     pub fn to_file(&self, path: impl Into<PathBuf>) -> Result<()> {
         let path = path.into();
         let content = serde_json::to_string_pretty(self)
@@ -365,6 +373,10 @@ impl ExtractorConfig {
     }
 
     /// Validate the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any configuration invariant is violated.
     pub fn validate(&self) -> Result<()> {
         if self.hidden_size == 0 {
             return Err(GlinerError::config("hidden_size must be > 0"));
@@ -525,6 +537,10 @@ impl ConfigBuilder {
     }
 
     /// Build the config, validating all settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if configuration validation fails.
     pub fn build(self) -> Result<ExtractorConfig> {
         self.config.validate()?;
         Ok(self.config)

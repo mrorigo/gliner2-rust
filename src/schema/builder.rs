@@ -325,6 +325,10 @@ impl SchemaBuilder {
     /// # Returns
     ///
     /// The constructed `Schema`, or an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the assembled schema fails validation.
     pub fn build(mut self) -> Result<Schema> {
         // Finish any active structure
         if let Some(structure_builder) = self.active_structure.take() {

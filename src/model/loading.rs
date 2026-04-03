@@ -56,6 +56,11 @@ impl ModelLoader {
     ///
     /// * `config` - The extractor configuration.
     /// * `device` - The device to load tensors onto.
+    ///
+    /// # Errors
+    ///
+    /// This function currently does not fail, but returns `Result` for API
+    /// consistency with other constructors.
     pub fn new(config: &ExtractorConfig, device: Device) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
@@ -73,6 +78,11 @@ impl ModelLoader {
     /// # Returns
     ///
     /// `Ok(())` if weights were loaded successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is missing, unreadable, malformed, or if
+    /// rebuilding model components fails.
     pub fn load_safetensors(&self, path: impl AsRef<Path>, model: &mut Extractor) -> Result<()> {
         let path = path.as_ref();
 
@@ -111,6 +121,11 @@ impl ModelLoader {
     /// # Returns
     ///
     /// `Ok(())` if weights were loaded successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no paths are provided, shard files cannot be read,
+    /// or rebuilding model components fails.
     pub fn load_sharded_safetensors(
         &self,
         paths: &[impl AsRef<Path>],
@@ -272,6 +287,11 @@ pub mod utils {
     /// # Returns
     ///
     /// A loaded `Extractor` model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model construction fails, no valid safetensors are
+    /// found, or weight loading fails.
     pub fn load_from_hf_dir(
         model_path: impl AsRef<Path>,
         config: &ExtractorConfig,

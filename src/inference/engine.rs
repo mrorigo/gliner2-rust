@@ -91,6 +91,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// A new `GLiNER2` engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model initialization fails.
     pub fn new(config: &ExtractorConfig) -> Result<Self> {
         let model = Extractor::new(config)?;
         let ws_tokenizer = WhitespaceTokenizer::new();
@@ -131,6 +135,11 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// A loaded `GLiNER2` engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model initialization fails, model weights cannot be
+    /// loaded, or a local path is invalid.
     pub fn from_pretrained(model_name_or_path: impl AsRef<Path>) -> Result<Self> {
         let input = model_name_or_path.as_ref();
         let input_str = input.to_string_lossy().to_string();
@@ -338,6 +347,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Extraction result with entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     pub fn extract_entities(
         &self,
         text: &str,
@@ -374,6 +387,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     #[allow(clippy::too_many_arguments)]
     pub fn batch_extract_entities(
         &self,
@@ -416,6 +433,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Classification result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     pub fn classify_text(
         &self,
         text: &str,
@@ -458,6 +479,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch classification results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     #[allow(clippy::too_many_arguments)]
     pub fn batch_classify_text(
         &self,
@@ -508,6 +533,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Extraction result with relations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     pub fn extract_relations(
         &self,
         text: &str,
@@ -549,6 +578,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema construction, batching, or inference fails.
     #[allow(clippy::too_many_arguments)]
     pub fn batch_extract_relations(
         &self,
@@ -597,6 +630,11 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Extraction result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if batching or inference fails, or no result is
+    /// produced for the input sample.
     pub fn extract(
         &self,
         text: &str,
@@ -639,6 +677,10 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if collation, model forward, or post-processing fails.
     #[allow(clippy::too_many_arguments)]
     pub fn batch_extract(
         &self,
@@ -673,8 +715,7 @@ impl GLiNER2 {
         let mut all_results = Vec::with_capacity(texts.len());
 
         // Sequential processing (Tensor is not Sync in tch 0.24)
-        let chunks: Vec<_> = samples.chunks(batch_size).collect();
-        for chunk in chunks {
+        for chunk in samples.chunks(batch_size) {
             let results = self.process_batch(
                 chunk,
                 model,
@@ -2020,11 +2061,19 @@ impl GLiNER2 {
     }
 
     /// Quantize the model to FP16.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if quantization fails.
     pub fn quantize(&mut self) -> Result<()> {
         self.model.quantize()
     }
 
     /// Compile the model for faster inference.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compile setup fails.
     pub fn compile(&mut self) -> Result<()> {
         self.model.compile()
     }
@@ -2038,6 +2087,11 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// `Ok(())` if weights were loaded successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the safetensors file cannot be read or weights
+    /// cannot be applied to the model.
     pub fn load_weights(&mut self, path: impl AsRef<std::path::Path>) -> Result<()> {
         self.model.load_weights(path)
     }
