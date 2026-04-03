@@ -7,8 +7,29 @@ use gliner2_rs::{ExtractorConfig, GLiNER2};
 use serde_json::Value as JsonValue;
 
 fn find_snapshot_dir() -> PathBuf {
-    let root =
-        Path::new("/Users/origo/.cache/huggingface/hub/models--fastino--gliner2-base-v1/snapshots");
+    let root = if let Some(explicit) = std::env::var_os("GLINER2_SNAPSHOT_DIR") {
+        PathBuf::from(explicit)
+    } else if let Some(hf_home) = std::env::var_os("HF_HOME") {
+        PathBuf::from(hf_home)
+            .join("hub")
+            .join("models--fastino--gliner2-base-v1")
+            .join("snapshots")
+    } else {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".cache")
+            .join("huggingface")
+            .join("hub")
+            .join("models--fastino--gliner2-base-v1")
+            .join("snapshots")
+    };
+
+    assert!(
+        root.exists(),
+        "snapshot directory not found: {}. set GLINER2_SNAPSHOT_DIR to override",
+        root.display()
+    );
+
     let mut candidates = Vec::new();
     for entry in fs::read_dir(root).expect("Failed to read snapshots dir") {
         let entry = entry.expect("Failed to read snapshot entry");
@@ -188,7 +209,7 @@ fn test_python_reference_parity_fixtures() {
     let output = Command::new(py)
         .arg(script)
         .arg(snapshot.to_string_lossy().to_string())
-        .current_dir("/Users/origo/src/gliner2-rust")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("failed to run python parity reference");
     assert!(
