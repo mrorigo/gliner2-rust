@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Error types for GLiNER2 Rust implementation.
 //!
 //! This module defines all error types used throughout the library,

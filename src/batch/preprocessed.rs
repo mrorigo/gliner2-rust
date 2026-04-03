@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Preprocessed batch for GLiNER2 inference.
 //!
 //! This module defines the `PreprocessedBatch` struct, which holds GPU-ready

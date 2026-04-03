@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Configuration for the GLiNER2 Extractor model.
 //!
 //! This module defines the `ExtractorConfig` struct and related types

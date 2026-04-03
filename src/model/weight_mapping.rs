@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Weight name mapping for GLiNER2 model loading.
 //!
 //! This module provides utilities for mapping GLiNER2 weight names from

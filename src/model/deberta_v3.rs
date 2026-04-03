@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! DeBERTa V3 encoder for GLiNER2.
 //!
 //! This implements the exact DeBERTa V3 architecture used by GLiNER2:

@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Batch module for GLiNER2.
 //!
 //! This module provides data structures and utilities for batching

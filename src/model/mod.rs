@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Model module for GLiNER2.
 //!
 //! This module provides the neural network components for the GLiNER2 model,

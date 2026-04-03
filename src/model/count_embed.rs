@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Count embedding layer for GLiNER2.
 //!
 //! This implements the full count_embed layer with GRU + Transformer architecture

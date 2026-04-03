@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Span representation layer for GLiNER2 (markerV0 mode).
 //!
 //! Architecture from GLiNER2 Python implementation:

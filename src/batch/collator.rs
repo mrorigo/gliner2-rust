@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! ExtractorCollator for GLiNER2 batch preprocessing.
 //!
 //! This module provides the `ExtractorCollator` struct that converts raw

@@ -1148,7 +1148,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gliner2-rust"
+name = "gliner2-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",

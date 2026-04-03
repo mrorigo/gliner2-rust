@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Schema builder for GLiNER2.
 //!
 //! This module provides a fluent API for building extraction schemas,

@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Classifier head for GLiNER2.
 //!
 //! Implements a 2-layer MLP: hidden_size → hidden_size*2 → 1

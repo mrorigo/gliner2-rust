@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Inference module for GLiNER2.
 //!
 //! This module provides the main inference engine and extraction logic

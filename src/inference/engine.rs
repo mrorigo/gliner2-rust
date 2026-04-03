@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Inference engine for GLiNER2.
 //!
 //! This module provides the main `GLiNER2` struct that serves as the

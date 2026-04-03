@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Schema types for GLiNER2.
 //!
 //! This module defines all data structures used to represent extraction schemas,
@@ -489,20 +490,15 @@ impl Schema {
 
     /// Get all task types in the schema.
     pub fn task_types(&self) -> Vec<TaskType> {
-        let mut types = Vec::new();
-        if !self.entities.is_empty() {
-            types.push(TaskType::Entities);
-        }
-        if !self.classifications.is_empty() {
-            types.push(TaskType::Classifications);
-        }
-        if !self.structures.is_empty() {
-            types.push(TaskType::JsonStructures);
-        }
-        if !self.relations.is_empty() {
-            types.push(TaskType::Relations);
-        }
-        types
+        [
+            (!self.entities.is_empty(), TaskType::Entities),
+            (!self.classifications.is_empty(), TaskType::Classifications),
+            (!self.structures.is_empty(), TaskType::JsonStructures),
+            (!self.relations.is_empty(), TaskType::Relations),
+        ]
+        .into_iter()
+        .filter_map(|(enabled, task)| enabled.then_some(task))
+        .collect()
     }
 
     /// Validate the schema.

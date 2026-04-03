@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Model weight loading for GLiNER2.
 //!
 //! This module provides utilities for loading model weights from safetensors
@@ -251,23 +252,22 @@ pub mod utils {
     /// A vector of paths to safetensors files.
     pub fn get_safetensors_files(path: impl AsRef<Path>) -> Vec<std::path::PathBuf> {
         let path = path.as_ref();
-        let mut files = Vec::new();
-
-        if path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    if entry_path
+        let mut files = if path.is_dir() {
+            std::fs::read_dir(path)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+                .filter(|entry_path| {
+                    entry_path
                         .extension()
                         .is_some_and(|ext| ext == "safetensors")
-                    {
-                        files.push(entry_path);
-                    }
-                }
-            }
+                })
+                .collect()
         } else if path.exists() {
-            files.push(path.to_path_buf());
-        }
+            vec![path.to_path_buf()]
+        } else {
+            Vec::new()
+        };
 
         files.sort();
         files

@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Candle-based transformer encoder for GLiNER2.
 //!
 //! This module provides a wrapper around candle's BERT and DeBERTa V2 models,

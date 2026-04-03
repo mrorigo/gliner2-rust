@@ -1,5 +1,5 @@
 [package]
-name = "gliner2-rust"
+name = "gliner2-rs"
 version = "0.1.0"
 edition = "2024"
 description = "Rust implementation of GLiNER2 for efficient CPU-based information extraction"

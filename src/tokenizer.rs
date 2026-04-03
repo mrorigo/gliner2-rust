@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Whitespace tokenizer for GLiNER2.
 //!
 //! This module provides a fast regex-based tokenizer that matches the Python

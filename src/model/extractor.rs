@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! Main Extractor model for GLiNER2.
 //!
 //! This module implements the core `Extractor` model that combines all

@@ -1,3 +1,4 @@
+// Rust guideline compliant 2026-04-03
 //! GLiNER2 Rust Implementation
 //!
 //! A Rust port of the GLiNER2 information extraction model, providing efficient
