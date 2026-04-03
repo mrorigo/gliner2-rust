@@ -84,7 +84,6 @@ struct DebertaV3Attention {
     output_layer_norm: LayerNorm,
     num_attention_heads: usize,
     attention_head_size: usize,
-    pos_dropout_prob: f64,
     max_relative_positions: isize,
     position_buckets: usize,
     share_att_key: bool,
@@ -113,7 +112,6 @@ impl DebertaV3Attention {
             output_dense, output_layer_norm,
             num_attention_heads: config.num_attention_heads,
             attention_head_size,
-            pos_dropout_prob: config.hidden_dropout_prob,
             max_relative_positions: config.max_relative_positions,
             position_buckets: config.position_buckets,
             share_att_key: config.share_att_key,
@@ -199,7 +197,7 @@ impl DebertaV3Attention {
         // Content-to-Position (c2p): query @ pos_key^T
         if self.pos_att_type.iter().any(|s| s == "c2p") {
             let c2p_att = self.content_to_position(
-                query_layer, &rel_embeddings, &relative_pos, scale, batch_size, seq_len,
+                query_layer, &rel_embeddings, &relative_pos, scale, batch_size,
             )?;
             score = score.add(&c2p_att)?;
         }
@@ -207,7 +205,7 @@ impl DebertaV3Attention {
         // Position-to-Content (p2c): key @ pos_query^T
         if self.pos_att_type.iter().any(|s| s == "p2c") {
             let p2c_att = self.position_to_content(
-                query_layer, key_layer, &rel_embeddings, &relative_pos, scale, batch_size, seq_len,
+                key_layer, &rel_embeddings, &relative_pos, scale, batch_size,
             )?;
             score = score.add(&p2c_att)?;
         }
@@ -223,7 +221,6 @@ impl DebertaV3Attention {
         relative_pos: &Tensor,
         scale: f64,
         batch_size: usize,
-        seq_len: usize,
     ) -> Result<Tensor> {
         // Compute position key projections
         let pos_key_layer = if self.share_att_key {
@@ -260,13 +257,11 @@ impl DebertaV3Attention {
     /// Position-to-Content attention: key @ pos_query^T, gathered by relative positions
     fn position_to_content(
         &self,
-        query_layer: &Tensor,
         key_layer: &Tensor,
         rel_embeddings: &Tensor,
         relative_pos: &Tensor,
         scale: f64,
         batch_size: usize,
-        seq_len: usize,
     ) -> Result<Tensor> {
         // Compute position query projections
         let pos_query_layer = if self.share_att_key {

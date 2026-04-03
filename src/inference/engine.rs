@@ -69,8 +69,6 @@ pub type BatchExtractionResult = Vec<ExtractionResult>;
 pub struct GLiNER2 {
     /// The underlying extractor model.
     model: Extractor,
-    /// Whitespace tokenizer for text preprocessing.
-    tokenizer: WhitespaceTokenizer,
     /// Batch collator for inference.
     collator: ExtractorCollator,
     /// Default confidence threshold.
@@ -122,7 +120,6 @@ impl GLiNER2 {
 
         Ok(Self {
             model,
-            tokenizer: ws_tokenizer,
             collator,
             default_threshold: 0.5,
             device,
@@ -185,7 +182,6 @@ impl GLiNER2 {
 
         Ok(Self {
             model,
-            tokenizer: ws_tokenizer,
             collator,
             default_threshold: 0.5,
             device,
@@ -664,7 +660,7 @@ impl GLiNER2 {
         schema: &Schema,
         batch_size: usize,
         threshold: f32,
-        num_workers: usize,
+        _num_workers: usize,
         include_confidence: bool,
         include_spans: bool,
         max_len: Option<usize>,
@@ -945,7 +941,6 @@ impl GLiNER2 {
         if dims.len() != 3 {
             return Ok(JsonValue::Object(entities));
         }
-        let seq_len = dims[0];
         let max_width = dims[1];
         let hidden_size = dims[2];
 

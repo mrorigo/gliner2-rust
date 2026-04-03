@@ -8,8 +8,6 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::error::{GlinerError, Result};
-
 /// Regex pattern for whitespace tokenization.
 ///
 /// Matches in order:

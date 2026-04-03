@@ -5,8 +5,6 @@
 //! `PreprocessedBatch` dataclass and provides methods for device transfer,
 //! memory pinning, and field access.
 
-use std::collections::HashMap;
-
 use serde_json::Value as JsonValue;
 use candle_core::Tensor;
 

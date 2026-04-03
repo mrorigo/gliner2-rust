@@ -27,7 +27,7 @@
 //!     .unwrap();
 //! ```
 
-use crate::error::{GlinerError, Result};
+use crate::error::Result;
 use crate::schema::types::*;
 use std::collections::HashMap;
 

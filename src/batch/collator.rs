@@ -283,7 +283,7 @@ impl ExtractorCollator {
         };
 
         // Encode schema into token sequences
-        let schema_result = self.encode_schema(schema, truncated_tokens.len())?;
+        let schema_result = self.encode_schema(schema)?;
 
         // Build input sequence using HuggingFace tokenizer when available
         let mut input_ids: Vec<i64> = Vec::new();
@@ -301,7 +301,7 @@ impl ExtractorCollator {
             let mut combined_tokens: Vec<String> = Vec::new();
             let num_schemas = schema_result.schema_tokens_list.len();
 
-            for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
+            for schema_tokens in &schema_result.schema_tokens_list {
                 for token in schema_tokens {
                     combined_tokens.push(token.clone());
                 }
@@ -388,7 +388,7 @@ impl ExtractorCollator {
             }
         } else {
             // Fallback: use placeholder token IDs
-            for (schema_idx, schema_tokens) in schema_result.schema_tokens_list.iter().enumerate() {
+            for schema_tokens in &schema_result.schema_tokens_list {
                 let schema_start_pos = input_ids.len();
                 for token in schema_tokens {
                     input_ids.push(self.token_to_id(token));
@@ -431,7 +431,7 @@ impl ExtractorCollator {
     }
 
     /// Encode a schema into token sequences.
-    fn encode_schema(&self, schema: &JsonValue, text_len: usize) -> Result<SchemaEncodingResult> {
+    fn encode_schema(&self, schema: &JsonValue) -> Result<SchemaEncodingResult> {
         let mut schema_tokens_list: Vec<Vec<String>> = Vec::new();
         let mut task_types: Vec<String> = Vec::new();
         let mut structure_labels: Vec<JsonValue> = Vec::new();
@@ -690,52 +690,6 @@ impl ExtractorCollator {
         (hash % 30522) as i64
     }
 
-    /// Encode a full text string and return token IDs with subword tracking.
-    ///
-    /// Returns (input_ids, text_word_first_positions, schema_special_positions).
-    /// text_word_first_positions maps each whitespace token to its first subword position.
-    fn encode_text_with_subwords(&self, text: &str) -> Result<(Vec<i64>, Vec<usize>)> {
-        if let Some(hf_tok) = &self.hf_tokenizer {
-            let encoding = hf_tok.encode(text, true)
-                .map_err(|e| GlinerError::batch_processing(format!("HF tokenizer encode failed: {e}")))?;
-
-            let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-
-            // Map whitespace token boundaries to subword positions
-            let whitespace_tokens = self.tokenizer.tokenize(text);
-            let mut text_word_first_positions = Vec::with_capacity(whitespace_tokens.len());
-
-            // Get word offsets from encoding
-            let word_offsets: Vec<(usize, usize)> = encoding.get_offsets().iter()
-                .map(|&(start, end)| (start, end))
-                .collect();
-
-            // For each whitespace token, find the first subword position that overlaps with it
-            for ws_token in &whitespace_tokens {
-                let ws_start = ws_token.start;
-                let ws_end = ws_token.end;
-
-                // Find first subword that overlaps with this whitespace token
-                for (subword_idx, (sub_start, sub_end)) in word_offsets.iter().enumerate() {
-                    // Check overlap: subword overlaps with whitespace token
-                    if *sub_start < ws_end && *sub_end > ws_start {
-                        text_word_first_positions.push(subword_idx);
-                        break;
-                    }
-                }
-            }
-
-            Ok((ids, text_word_first_positions))
-        } else {
-            // Fallback: no HF tokenizer, use whitespace tokens as-is
-            let whitespace_tokens = self.tokenizer.tokenize(text);
-            let ids: Vec<i64> = whitespace_tokens.iter()
-                .map(|t| self.token_to_id(&t.text))
-                .collect();
-            let text_word_first_positions: Vec<usize> = (0..ids.len()).collect();
-            Ok((ids, text_word_first_positions))
-        }
-    }
 }
 
 /// Result of processing a single sample.
@@ -933,7 +887,7 @@ mod tests {
             }
         });
 
-        let result = collator.encode_schema(&schema, 10);
+        let result = collator.encode_schema(&schema);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.task_types, vec!["entities"]);
@@ -964,7 +918,7 @@ mod tests {
             ]
         });
 
-        let result = collator.encode_schema(&schema, 10);
+        let result = collator.encode_schema(&schema);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.task_types.len(), 3);
