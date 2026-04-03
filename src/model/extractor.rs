@@ -41,6 +41,9 @@ use crate::model::count_pred::CountPredictionLayer;
 use crate::model::loading::ModelLoader;
 use crate::model::span_rep::{SpanRepOutput, SpanRepresentationLayer};
 
+type SchemaEmbeddings = Vec<Vec<Vec<Tensor>>>;
+type EmbeddingExtraction = (Vec<Tensor>, SchemaEmbeddings);
+
 /// Output of the Extractor model forward pass.
 #[derive(Clone)]
 pub struct ExtractorOutput {
@@ -429,7 +432,7 @@ impl Extractor {
             for schema_idx in 0..num_schemas {
                 // Get schema tokens for this schema
                 let schema_tokens = batch.schema_tokens(sample_idx, schema_idx);
-                if schema_tokens.is_none() || schema_tokens.as_ref().map_or(true, |t| t.is_empty()) {
+                if schema_tokens.is_none() || schema_tokens.as_ref().is_none_or(|t| t.is_empty()) {
                     sample_schema_embs.push(Vec::new());
                     continue;
                 }
@@ -437,7 +440,7 @@ impl Extractor {
 
                 // Get special indices for this schema
                 let special_indices = batch.schema_special_indices_for(sample_idx, schema_idx);
-                if special_indices.is_none() || special_indices.as_ref().map_or(true, |i| i.is_empty()) {
+                if special_indices.is_none() || special_indices.as_ref().is_none_or(|i| i.is_empty()) {
                     sample_schema_embs.push(Vec::new());
                     continue;
                 }
@@ -487,14 +490,13 @@ impl Extractor {
         let batch_size = batch.batch_size();
         let mut span_outputs = Vec::with_capacity(batch_size);
 
-        for sample_idx in 0..batch_size {
+        for (sample_idx, token_embs) in token_embeddings.iter().enumerate().take(batch_size) {
             // Check if this sample has span-based tasks
             let task_types = batch.sample_task_types(sample_idx);
-            let has_span_task = task_types.map_or(false, |types| {
+            let has_span_task = task_types.is_some_and(|types| {
                 types.iter().any(|t| t != "classifications")
             });
 
-            let token_embs = &token_embeddings[sample_idx];
             let numel = token_embs.dims().iter().product::<usize>();
 
             if has_span_task && numel > 0 {
@@ -571,15 +573,14 @@ impl Extractor {
         let batch_size = schema_embeddings.len();
         let mut all_logits = Vec::with_capacity(batch_size);
 
-        for sample_idx in 0..batch_size {
+        for (sample_idx, sample_schema_embs) in schema_embeddings.iter().enumerate().take(batch_size) {
             let task_types = batch.sample_task_types(sample_idx);
-            let has_classification = task_types.map_or(false, |types| {
+            let has_classification = task_types.is_some_and(|types| {
                 types.iter().any(|t| t == "classifications")
             });
 
             if has_classification {
                 // Collect schema embeddings for classification tasks
-                let sample_schema_embs = &schema_embeddings[sample_idx];
                 let mut cls_embs = Vec::new();
 
                 let task_types_ref = task_types.unwrap_or(&[]);
@@ -646,7 +647,7 @@ impl Extractor {
         &self,
         _encoder_output: &Tensor,
         batch: &PreprocessedBatch,
-    ) -> Result<(Vec<Tensor>, Vec<Vec<Vec<Tensor>>>)> {
+    ) -> Result<EmbeddingExtraction> {
         let token_embeddings = self.extract_token_embeddings(batch)?;
         let schema_embeddings = self.extract_schema_embeddings(batch)?;
         Ok((token_embeddings, schema_embeddings))
@@ -671,7 +672,7 @@ impl Extractor {
         _encoder_output: &Tensor,
         _input_ids: &Tensor,
         batch: &PreprocessedBatch,
-    ) -> Result<(Vec<Tensor>, Vec<Vec<Vec<Tensor>>>)> {
+    ) -> Result<EmbeddingExtraction> {
         // Similar to fast path but with explicit looping
         self.extract_embeddings_fast(_encoder_output, batch)
     }
@@ -712,17 +713,11 @@ impl Extractor {
 
 /// Builder for constructing `Extractor` with custom settings.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ExtractorBuilder {
     config: ExtractorConfig,
 }
 
-impl Default for ExtractorBuilder {
-    fn default() -> Self {
-        Self {
-            config: ExtractorConfig::default(),
-        }
-    }
-}
 
 impl ExtractorBuilder {
     /// Create a new builder with default settings.

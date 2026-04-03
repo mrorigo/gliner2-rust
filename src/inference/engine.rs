@@ -229,33 +229,30 @@ impl GLiNER2 {
     /// Returns `None` only if all loading methods fail (falls back to whitespace tokenizer).
     fn load_hf_tokenizer(config: &ExtractorConfig) -> Option<HfTokenizer> {
         // Try loading from explicit tokenizer path first
-        if let Some(ref path) = config.tokenizer_path {
-            if let Some(tokenizer) = Self::load_hf_tokenizer_from_path(path) {
+        if let Some(ref path) = config.tokenizer_path
+            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(path) {
                 tracing::info!("Loaded HuggingFace tokenizer from: {:?}", path);
                 return Some(tokenizer);
             }
-        }
 
         // Try loading from model name as local directory
         let model_name = &config.model_name;
         let model_path = std::path::Path::new(model_name);
-        if model_path.exists() && model_path.is_dir() {
-            if let Some(tokenizer) = Self::load_hf_tokenizer_from_path(model_path) {
+        if model_path.exists() && model_path.is_dir()
+            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(model_path) {
                 tracing::info!("Loaded HuggingFace tokenizer from model directory: {}", model_name);
                 return Some(tokenizer);
             }
-        }
 
         // Try common tokenizer file patterns in current directory
         let tokenizer_files = ["tokenizer.json", "tokenizer_config.json"];
         for file in &tokenizer_files {
             let path = std::path::Path::new(file);
-            if path.exists() {
-                if let Ok(tokenizer) = HfTokenizer::from_file(path) {
+            if path.exists()
+                && let Ok(tokenizer) = HfTokenizer::from_file(path) {
                     tracing::info!("Loaded HuggingFace tokenizer from: {}", file);
                     return Some(tokenizer);
                 }
-            }
         }
 
         // Download from HuggingFace Hub (default behavior)
@@ -272,18 +269,16 @@ impl GLiNER2 {
 
         // Try loading tokenizer.json first (preferred, fast)
         let tokenizer_json = path.join("tokenizer.json");
-        if tokenizer_json.exists() {
-            if let Ok(tokenizer) = HfTokenizer::from_file(&tokenizer_json) {
+        if tokenizer_json.exists()
+            && let Ok(tokenizer) = HfTokenizer::from_file(&tokenizer_json) {
                 return Some(tokenizer);
             }
-        }
 
         // Try loading from the path directly if it's a tokenizer.json file
-        if path.extension().map_or(false, |ext| ext == "json") {
-            if let Ok(tokenizer) = HfTokenizer::from_file(path) {
+        if path.extension().is_some_and(|ext| ext == "json")
+            && let Ok(tokenizer) = HfTokenizer::from_file(path) {
                 return Some(tokenizer);
             }
-        }
 
         None
     }
@@ -393,6 +388,7 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    #[allow(clippy::too_many_arguments)]
     pub fn batch_extract_entities(
         &self,
         texts: &[String],
@@ -476,6 +472,7 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch classification results.
+    #[allow(clippy::too_many_arguments)]
     pub fn batch_classify_text(
         &self,
         texts: &[String],
@@ -566,6 +563,7 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    #[allow(clippy::too_many_arguments)]
     pub fn batch_extract_relations(
         &self,
         texts: &[String],
@@ -654,6 +652,7 @@ impl GLiNER2 {
     /// # Returns
     ///
     /// Batch extraction results.
+    #[allow(clippy::too_many_arguments)]
     pub fn batch_extract(
         &self,
         texts: &[String],
@@ -818,16 +817,15 @@ impl GLiNER2 {
                 }
                 "classifications" => {
                     // Get task name from schema tokens
-                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx) {
-                        if schema_tokens.len() > 2 {
+                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
+                        && schema_tokens.len() > 2 {
                             let task_name = &schema_tokens[2];
                             result.insert(task_name.clone(), task_result);
                         }
-                    }
                 }
                 "relations" => {
-                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx) {
-                        if schema_tokens.len() > 2 {
+                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
+                        && schema_tokens.len() > 2 {
                             let rel_name = &schema_tokens[2];
                             if let Some(relations) = result.get_mut("relation_extraction") {
                                 if let Some(rel_obj) = relations.as_object_mut() {
@@ -839,15 +837,13 @@ impl GLiNER2 {
                                 result.insert("relation_extraction".to_string(), JsonValue::Object(rel_obj));
                             }
                         }
-                    }
                 }
                 "json_structures" => {
-                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx) {
-                        if schema_tokens.len() > 2 {
+                    if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
+                        && schema_tokens.len() > 2 {
                             let struct_name = &schema_tokens[2];
                             result.insert(struct_name.clone(), task_result);
                         }
-                    }
                 }
                 _ => {}
             }
@@ -864,6 +860,7 @@ impl GLiNER2 {
     /// 3. Compute span scores via dot product
     /// 4. Apply threshold filtering
     /// 5. Extract entities with text spans
+    #[allow(clippy::too_many_arguments)]
     fn extract_entities_from_output(
         &self,
         output: &crate::model::ExtractorOutput,
@@ -915,15 +912,14 @@ impl GLiNER2 {
         let mut special_token_counter = 0;
         for (i, token) in schema_tokens.iter().enumerate() {
             if token.starts_with('[') && token.ends_with(']') {
-                if token == "[E]" {
-                    if i + 1 < schema_tokens.len() {
+                if token == "[E]"
+                    && i + 1 < schema_tokens.len() {
                         let entity_type = schema_tokens[i + 1].clone();
                         if !entity_type.is_empty() {
                             entity_types.push(entity_type);
                             entity_type_indices.push(special_token_counter);
                         }
                     }
-                }
                 special_token_counter += 1;
             }
         }
@@ -961,14 +957,13 @@ impl GLiNER2 {
         for &emb_idx in &entity_type_indices {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
-                if let Ok(data) = emb.flatten_all() {
-                    if let Ok(vec) = data.to_vec1::<f32>() {
+                if let Ok(data) = emb.flatten_all()
+                    && let Ok(vec) = data.to_vec1::<f32>() {
                         entity_emb_data.extend_from_slice(&vec);
                     }
-                }
             } else {
                 // Pad with zeros if embedding not found
-                entity_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+                entity_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
             }
         }
 
@@ -986,11 +981,11 @@ impl GLiNER2 {
         // Use [P] token embedding (schema_tokens_embs[0]) for count prediction
         let p_token_emb = &schema_tokens_embs[0];
         let pred_count = if let Ok(output) = self.model.count_pred.predict_count(p_token_emb) {
-            output.count.min(20).max(1)
+            output.count.clamp(1, 20)
         } else {
             5
         };
-        let pred_count = pred_count.min(20).max(1);
+        let pred_count = pred_count.clamp(1, 20);
 
         // Step 3: Transform entity embeddings using count_embed
         // Output shape: (pred_count, num_entity_types, hidden)
@@ -1064,7 +1059,11 @@ impl GLiNER2 {
 
                 // Compute scores for each entity type.
                 // Match Python entities path: use count index 0 (no max-over-count aggregation).
-                for entity_idx in 0..num_entity_types {
+                for (entity_idx, score_slot) in span_entity_scores[mask_idx]
+                    .iter_mut()
+                    .enumerate()
+                    .take(num_entity_types)
+                {
                     // Get struct_proj[0, entity_idx, :]
                     let struct_start = entity_idx * hidden_size;
                     if struct_start + hidden_size > struct_proj_data.len() {
@@ -1081,7 +1080,7 @@ impl GLiNER2 {
 
                     // Apply sigmoid
                     let prob = 1.0 / (1.0 + (-score).exp());
-                    span_entity_scores[mask_idx][entity_idx] = prob;
+                    *score_slot = prob;
                 }
             }
         }
@@ -1283,6 +1282,7 @@ impl GLiNER2 {
     }
 
     /// Extract relations from model output.
+    #[allow(clippy::too_many_arguments)]
     fn extract_relations_from_output(
         &self,
         output: &crate::model::ExtractorOutput,
@@ -1340,13 +1340,12 @@ impl GLiNER2 {
         for &emb_idx in &field_emb_indices {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
-                if let Ok(data) = emb.flatten_all() {
-                    if let Ok(vec) = data.to_vec1::<f32>() {
+                if let Ok(data) = emb.flatten_all()
+                    && let Ok(vec) = data.to_vec1::<f32>() {
                         field_emb_data.extend_from_slice(&vec);
                     }
-                }
             } else {
-                field_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+                field_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
             }
         }
 
@@ -1402,7 +1401,7 @@ impl GLiNER2 {
         for inst in 0..pred_count {
             let mut top_fields: Vec<Option<(String, f32, usize, usize)>> = vec![None; field_names.len()];
 
-            for field_idx in 0..field_names.len() {
+            for (field_idx, top_field) in top_fields.iter_mut().enumerate().take(field_names.len()) {
                 let mut spans = Self::collect_scored_spans(
                     &span_rep_data,
                     &struct_proj_data,
@@ -1424,12 +1423,12 @@ impl GLiNER2 {
 
                 spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 if let Some(first) = spans.into_iter().next() {
-                    top_fields[field_idx] = Some(first);
+                    *top_field = Some(first);
                 }
             }
 
-            if top_fields.len() >= 2 {
-                if let (Some(head), Some(tail)) = (&top_fields[0], &top_fields[1]) {
+            if top_fields.len() >= 2
+                && let (Some(head), Some(tail)) = (&top_fields[0], &top_fields[1]) {
                     let rel_obj = if include_spans && include_confidence {
                         serde_json::json!({
                             "head": {"text": head.0, "confidence": head.1, "start": head.2, "end": head.3},
@@ -1453,13 +1452,13 @@ impl GLiNER2 {
                     };
                     instances.push(rel_obj);
                 }
-            }
         }
 
         Ok(JsonValue::Array(instances))
     }
 
     /// Extract structures from model output.
+    #[allow(clippy::too_many_arguments)]
     fn extract_structures_from_output(
         &self,
         output: &crate::model::ExtractorOutput,
@@ -1516,13 +1515,12 @@ impl GLiNER2 {
         for &emb_idx in &field_emb_indices {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
-                if let Ok(data) = emb.flatten_all() {
-                    if let Ok(vec) = data.to_vec1::<f32>() {
+                if let Ok(data) = emb.flatten_all()
+                    && let Ok(vec) = data.to_vec1::<f32>() {
                         field_emb_data.extend_from_slice(&vec);
                     }
-                }
             } else {
-                field_emb_data.extend(std::iter::repeat(0.0f32).take(hidden_size));
+                field_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
             }
         }
 
@@ -1644,19 +1642,16 @@ impl GLiNER2 {
         schema_tokens_embs: &[Tensor],
         model: &Extractor,
     ) -> usize {
-        if let Some(all_counts) = &output.count_predictions {
-            if let Some(sample_counts) = all_counts.get(sample_idx) {
-                if let Some(count) = sample_counts.get(schema_idx) {
+        if let Some(all_counts) = &output.count_predictions
+            && let Some(sample_counts) = all_counts.get(sample_idx)
+                && let Some(count) = sample_counts.get(schema_idx) {
                     return (*count).clamp(1, 20);
                 }
-            }
-        }
 
-        if let Some(p_token_emb) = schema_tokens_embs.first() {
-            if let Ok(out) = model.count_pred.predict_count(p_token_emb) {
+        if let Some(p_token_emb) = schema_tokens_embs.first()
+            && let Ok(out) = model.count_pred.predict_count(p_token_emb) {
                 return out.count.clamp(1, 20);
             }
-        }
 
         5
     }
@@ -1733,7 +1728,7 @@ impl GLiNER2 {
     }
 
     fn format_spans(
-        spans: &mut Vec<(String, f32, usize, usize)>,
+        spans: &mut [(String, f32, usize, usize)],
         include_confidence: bool,
         include_spans: bool,
     ) -> JsonValue {

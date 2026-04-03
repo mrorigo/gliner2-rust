@@ -213,11 +213,11 @@ impl ExtractorCollator {
             let len = ids.len();
             padded_input_ids.extend_from_slice(ids);
             // Pad with 0 (assuming 0 is pad token ID)
-            padded_input_ids.extend(std::iter::repeat(0).take(max_seq_len - len));
+            padded_input_ids.extend(std::iter::repeat_n(0, max_seq_len - len));
 
             // Attention mask: 1 for real tokens, 0 for padding
-            attention_mask.extend(std::iter::repeat(1).take(len));
-            attention_mask.extend(std::iter::repeat(0).take(max_seq_len - len));
+            attention_mask.extend(std::iter::repeat_n(1, len));
+            attention_mask.extend(std::iter::repeat_n(0, max_seq_len - len));
         }
 
         // Create tensors
@@ -233,7 +233,7 @@ impl ExtractorCollator {
             let mut flat_indices: Vec<i64> = Vec::with_capacity(samples.len() * max_words);
             for indices in &all_text_word_indices {
                 flat_indices.extend_from_slice(indices);
-                flat_indices.extend(std::iter::repeat(-1).take(max_words - indices.len()));
+                flat_indices.extend(std::iter::repeat_n(-1, max_words - indices.len()));
             }
             Some(
                 Tensor::from_slice(&flat_indices, (samples.len(), max_words), &Device::Cpu)
@@ -309,7 +309,7 @@ impl ExtractorCollator {
                 combined_tokens.push("[SEP_STRUCT]".to_string());
             }
             // Remove last SEP_STRUCT if we added any
-            if combined_tokens.last().map_or(false, |t| t == "[SEP_STRUCT]") {
+            if combined_tokens.last().is_some_and(|t| t == "[SEP_STRUCT]") {
                 combined_tokens.pop();
             }
             // Add SEP_TEXT before text tokens
@@ -459,11 +459,11 @@ impl ExtractorCollator {
         }
 
         // Parse classifications
-        if let Some(classifications) = schema.get("classifications") {
-            if let Some(cls_array) = classifications.as_array() {
+        if let Some(classifications) = schema.get("classifications")
+            && let Some(cls_array) = classifications.as_array() {
                 for cls in cls_array {
-                    if let Some(cls_obj) = cls.as_object() {
-                        if let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
+                    if let Some(cls_obj) = cls.as_object()
+                        && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
                             let labels = cls_obj
                                 .get("labels")
                                 .and_then(|v| v.as_array())
@@ -481,14 +481,12 @@ impl ExtractorCollator {
                                 structure_labels.push(JsonValue::Array(Vec::new()));
                             }
                         }
-                    }
                 }
             }
-        }
 
         // Parse structures
-        if let Some(structures) = schema.get("json_structures") {
-            if let Some(struct_array) = structures.as_array() {
+        if let Some(structures) = schema.get("json_structures")
+            && let Some(struct_array) = structures.as_array() {
                 for structure in struct_array {
                     if let Some(struct_obj) = structure.as_object() {
                         for (parent, fields) in struct_obj {
@@ -505,11 +503,10 @@ impl ExtractorCollator {
                     }
                 }
             }
-        }
 
         // Parse relations
-        if let Some(relations) = schema.get("relations") {
-            if let Some(rel_array) = relations.as_array() {
+        if let Some(relations) = schema.get("relations")
+            && let Some(rel_array) = relations.as_array() {
                 for relation in rel_array {
                     if let Some(rel_obj) = relation.as_object() {
                         for (rel_name, fields) in rel_obj {
@@ -527,7 +524,6 @@ impl ExtractorCollator {
                     }
                 }
             }
-        }
 
         Ok(SchemaEncodingResult {
             schema_tokens_list,
@@ -554,12 +550,11 @@ impl ExtractorCollator {
             tokens.push(name.clone());
 
             // Add description if available
-            if let Some(desc) = entities_value.get(name).and_then(|v| v.as_str()) {
-                if !desc.is_empty() {
+            if let Some(desc) = entities_value.get(name).and_then(|v| v.as_str())
+                && !desc.is_empty() {
                     tokens.push(special_tokens::DESC_TOKEN.to_string());
                     tokens.push(format!("{name}: {desc}"));
                 }
-            }
         }
 
         tokens.push(special_tokens::CLOSE_PAREN.to_string());
@@ -602,9 +597,9 @@ impl ExtractorCollator {
         // Add examples if available
         if let Some(examples) = cls_obj.get("examples").and_then(|v| v.as_array()) {
             for example in examples {
-                if let Some(ex_array) = example.as_array() {
-                    if ex_array.len() >= 2 {
-                        if let (Some(input), Some(output)) =
+                if let Some(ex_array) = example.as_array()
+                    && ex_array.len() >= 2
+                        && let (Some(input), Some(output)) =
                             (ex_array[0].as_str(), ex_array[1].as_str())
                         {
                             tokens.push(special_tokens::EXAMPLE_TOKEN.to_string());
@@ -612,8 +607,6 @@ impl ExtractorCollator {
                             tokens.push(special_tokens::OUTPUT_TOKEN.to_string());
                             tokens.push(output.to_string());
                         }
-                    }
-                }
             }
         }
 
@@ -641,12 +634,11 @@ impl ExtractorCollator {
             tokens.push(field.clone());
 
             // Add description if available
-            if let Some(field_obj) = fields_obj.get(field).and_then(|v| v.as_object()) {
-                if let Some(desc) = field_obj.get("description").and_then(|v| v.as_str()) {
+            if let Some(field_obj) = fields_obj.get(field).and_then(|v| v.as_object())
+                && let Some(desc) = field_obj.get("description").and_then(|v| v.as_str()) {
                     tokens.push(special_tokens::DESC_TOKEN.to_string());
                     tokens.push(format!("{field}: {desc}"));
                 }
-            }
         }
 
         tokens.push(special_tokens::CLOSE_PAREN.to_string());
@@ -678,13 +670,11 @@ impl ExtractorCollator {
     /// If a HuggingFace tokenizer is available, it encodes the token and returns
     /// the first token ID. Otherwise, falls back to a hash-based placeholder.
     fn token_to_id(&self, token: &str) -> i64 {
-        if let Some(hf_tok) = &self.hf_tokenizer {
-            if let Ok(encoding) = hf_tok.encode(token, false) {
-                if let Some(&id) = encoding.get_ids().first() {
+        if let Some(hf_tok) = &self.hf_tokenizer
+            && let Ok(encoding) = hf_tok.encode(token, false)
+                && let Some(&id) = encoding.get_ids().first() {
                     return id as i64;
                 }
-            }
-        }
         // Fallback: hash-based placeholder
         let hash = token.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
         (hash % 30522) as i64

@@ -128,8 +128,8 @@ pub struct CandleEncoder {
 
 /// Internal enum holding either BERT or DeBERTa V2 model.
 enum EncoderModel {
-    Bert(bert::BertModel),
-    DebertaV2(debertav2::DebertaV2Model),
+    Bert(Box<bert::BertModel>),
+    DebertaV2(Box<debertav2::DebertaV2Model>),
 }
 
 impl CandleEncoder {
@@ -266,7 +266,7 @@ impl CandleEncoder {
                 let model = bert::BertModel::load(vb, &bert_config).map_err(|e| {
                     GlinerError::model_loading(format!("Failed to load BERT model: {e}"))
                 })?;
-                Ok(EncoderModel::Bert(model))
+                Ok(EncoderModel::Bert(Box::new(model)))
             }
             EncoderType::DebertaV2 => {
                 let deberta_config = Self::build_deberta_config(config);
@@ -276,7 +276,7 @@ impl CandleEncoder {
                             "Failed to load DeBERTa V2 model: {e}"
                         ))
                     })?;
-                Ok(EncoderModel::DebertaV2(model))
+                Ok(EncoderModel::DebertaV2(Box::new(model)))
             }
             EncoderType::DebertaV3 => {
                 let deberta_config = Self::build_deberta_v3_config(config);
@@ -286,7 +286,7 @@ impl CandleEncoder {
                             "Failed to load DeBERTa V3-compatible DeBERTa V2 model: {e}"
                         ))
                     })?;
-                Ok(EncoderModel::DebertaV2(model))
+                Ok(EncoderModel::DebertaV2(Box::new(model)))
             }
         }
     }

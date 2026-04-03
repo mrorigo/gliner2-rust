@@ -377,7 +377,7 @@ impl ExtractorConfig {
         if self.num_attention_heads == 0 {
             return Err(GlinerError::config("num_attention_heads must be > 0"));
         }
-        if self.hidden_size % self.num_attention_heads != 0 {
+        if !self.hidden_size.is_multiple_of(self.num_attention_heads) {
             return Err(GlinerError::config(
                 "hidden_size must be divisible by num_attention_heads",
             ));

@@ -12,18 +12,15 @@ use crate::error::{GlinerError, Result};
 /// Data type for schema fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FieldDtype {
     /// Single string value.
     Str,
     /// List of string values.
+    #[default]
     List,
 }
 
-impl Default for FieldDtype {
-    fn default() -> Self {
-        FieldDtype::List
-    }
-}
 
 impl std::fmt::Display for FieldDtype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -116,7 +113,7 @@ impl RegexValidator {
         })?;
 
         let matched = match self.mode {
-            MatchMode::Full => re.is_match(text) && re.find(text).map_or(false, |m| m.start() == 0 && m.end() == text.len()),
+            MatchMode::Full => re.is_match(text) && re.find(text).is_some_and(|m| m.start() == 0 && m.end() == text.len()),
             MatchMode::Partial => re.is_match(text),
         };
 
@@ -514,13 +511,12 @@ impl Schema {
                     "Entity name cannot be empty",
                 ));
             }
-            if let Some(threshold) = entity.threshold {
-                if !(0.0..=1.0).contains(&threshold) {
+            if let Some(threshold) = entity.threshold
+                && !(0.0..=1.0).contains(&threshold) {
                     return Err(GlinerError::invalid_schema(format!(
                         "Entity threshold must be 0-1, got {threshold}"
                     )));
                 }
-            }
         }
 
         // Validate classifications
@@ -563,13 +559,12 @@ impl Schema {
                         "Field name cannot be empty",
                     ));
                 }
-                if let Some(threshold) = field.threshold {
-                    if !(0.0..=1.0).contains(&threshold) {
+                if let Some(threshold) = field.threshold
+                    && !(0.0..=1.0).contains(&threshold) {
                         return Err(GlinerError::invalid_schema(format!(
                             "Field threshold must be 0-1, got {threshold}"
                         )));
                     }
-                }
             }
         }
 
@@ -580,13 +575,12 @@ impl Schema {
                     "Relation name cannot be empty",
                 ));
             }
-            if let Some(threshold) = relation.threshold {
-                if !(0.0..=1.0).contains(&threshold) {
+            if let Some(threshold) = relation.threshold
+                && !(0.0..=1.0).contains(&threshold) {
                     return Err(GlinerError::invalid_schema(format!(
                         "Relation threshold must be 0-1, got {threshold}"
                     )));
                 }
-            }
         }
 
         Ok(())
@@ -688,11 +682,10 @@ impl Schema {
                             if let Some(description) = &field.description {
                                 field_obj.insert("description".to_string(), serde_json::Value::String(description.clone()));
                             }
-                            if let Some(threshold) = field.threshold {
-                                if let Some(n) = serde_json::Number::from_f64(threshold as f64) {
+                            if let Some(threshold) = field.threshold
+                                && let Some(n) = serde_json::Number::from_f64(threshold as f64) {
                                     field_obj.insert("threshold".to_string(), serde_json::Value::Number(n));
                                 }
-                            }
                             if let Some(validators) = &field.validators {
                                 let vals = serde_json::to_value(validators).unwrap_or(serde_json::Value::Array(vec![]));
                                 field_obj.insert("validators".to_string(), vals);
@@ -787,11 +780,10 @@ impl Schema {
                 if let Some(entities_obj) = entities.as_object() {
                     for (name, value) in entities_obj {
                         let mut entity = EntityDef::new(name);
-                        if let Some(desc) = value.as_str() {
-                            if !desc.is_empty() {
+                        if let Some(desc) = value.as_str()
+                            && !desc.is_empty() {
                                 entity = entity.with_description(desc);
                             }
-                        }
                         schema.entities.push(entity);
                     }
                 } else if let Some(entities_arr) = entities.as_array() {
@@ -804,22 +796,21 @@ impl Schema {
             }
 
             // Parse entity descriptions
-            if let Some(descs) = obj.get("entity_descriptions") {
-                if let Some(descs_obj) = descs.as_object() {
+            if let Some(descs) = obj.get("entity_descriptions")
+                && let Some(descs_obj) = descs.as_object() {
                     for (k, v) in descs_obj {
                         if let Some(desc) = v.as_str() {
                             schema.entity_descriptions.insert(k.clone(), desc.to_string());
                         }
                     }
                 }
-            }
 
             // Parse classifications
-            if let Some(classifications) = obj.get("classifications") {
-                if let Some(cls_arr) = classifications.as_array() {
+            if let Some(classifications) = obj.get("classifications")
+                && let Some(cls_arr) = classifications.as_array() {
                     for cls_value in cls_arr {
-                        if let Some(cls_obj) = cls_value.as_object() {
-                            if let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
+                        if let Some(cls_obj) = cls_value.as_object()
+                            && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
                                 let labels = cls_obj
                                     .get("labels")
                                     .and_then(|v| v.as_array())
@@ -841,14 +832,12 @@ impl Schema {
 
                                 schema.classifications.push(cls);
                             }
-                        }
                     }
                 }
-            }
 
             // Parse structures
-            if let Some(structures) = obj.get("json_structures") {
-                if let Some(struct_arr) = structures.as_array() {
+            if let Some(structures) = obj.get("json_structures")
+                && let Some(struct_arr) = structures.as_array() {
                     for struct_value in struct_arr {
                         if let Some(struct_obj) = struct_value.as_object() {
                             for (name, fields_value) in struct_obj {
@@ -856,15 +845,14 @@ impl Schema {
                                 if let Some(fields_obj) = fields_value.as_object() {
                                     for (field_name, field_value) in fields_obj {
                                         let mut field = FieldDef::new(field_name);
-                                        if let Some(field_obj) = field_value.as_object() {
-                                            if let Some(choices) = field_obj.get("choices").and_then(|v| v.as_array()) {
+                                        if let Some(field_obj) = field_value.as_object()
+                                            && let Some(choices) = field_obj.get("choices").and_then(|v| v.as_array()) {
                                                 let choice_strings: Vec<String> = choices
                                                     .iter()
                                                     .filter_map(|v| v.as_str().map(String::from))
                                                     .collect();
                                                 field = field.with_choices(choice_strings);
                                             }
-                                        }
                                         structure.fields.push(field);
                                     }
                                 }
@@ -873,11 +861,10 @@ impl Schema {
                         }
                     }
                 }
-            }
 
             // Parse structure descriptions
-            if let Some(descs) = obj.get("json_descriptions") {
-                if let Some(descs_obj) = descs.as_object() {
+            if let Some(descs) = obj.get("json_descriptions")
+                && let Some(descs_obj) = descs.as_object() {
                     for (struct_name, fields_descs) in descs_obj {
                         if let Some(fields_obj) = fields_descs.as_object() {
                             let mut inner_map = HashMap::new();
@@ -890,7 +877,6 @@ impl Schema {
                         }
                     }
                 }
-            }
 
             // Parse relations
             if let Some(relations) = obj.get("relations") {

@@ -156,7 +156,7 @@ impl DebertaV3Attention {
         }
 
         // Apply attention mask
-        attention_scores = attention_scores.add(&attention_mask)?;
+        attention_scores = attention_scores.add(attention_mask)?;
         let attention_probs = candle_nn::ops::softmax(&attention_scores, 3)?;
 
         // Context layer: (batch, heads, seq, seq) @ (batch, heads, seq, head_size)
@@ -251,7 +251,7 @@ impl DebertaV3Attention {
         // Gather along last dim
         let gathered = gather_along_last_dim(&c2p_att, &shifted_pos)?;
 
-        Ok((gathered / scale)?)
+        gathered / scale
     }
 
     /// Position-to-Content attention: key @ pos_query^T, gathered by relative positions
@@ -295,7 +295,7 @@ impl DebertaV3Attention {
         let gathered = gather_along_last_dim(&p2c_att, &shifted_pos)?;
         let gathered = gathered.transpose(2, 3)?;
 
-        Ok((gathered / scale)?)
+        gathered / scale
     }
 }
 

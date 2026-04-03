@@ -186,13 +186,12 @@ impl PreprocessedBatch {
             let mut t = tensor.to_device(&device).map_err(|e| {
                 GlinerError::model_loading(format!("Failed to move tensor to device: {e}"))
             })?;
-            if let Some(dt) = dtype {
-                if !is_int {
+            if let Some(dt) = dtype
+                && !is_int {
                     t = t.to_dtype(dt).map_err(|e| {
                         GlinerError::model_loading(format!("Failed to cast tensor dtype: {e}"))
                     })?;
                 }
-            }
             Ok(t)
         };
 

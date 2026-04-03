@@ -218,7 +218,7 @@ pub mod utils {
             path.join("model.safetensors").exists()
                 || path.join("model.safetensors.index.json").exists()
         } else {
-            path.extension().map_or(false, |ext| ext == "safetensors")
+            path.extension().is_some_and(|ext| ext == "safetensors")
         }
     }
 
@@ -239,7 +239,7 @@ pub mod utils {
             if let Ok(entries) = std::fs::read_dir(path) {
                 for entry in entries.flatten() {
                     let entry_path = entry.path();
-                    if entry_path.extension().map_or(false, |ext| ext == "safetensors") {
+                    if entry_path.extension().is_some_and(|ext| ext == "safetensors") {
                         files.push(entry_path);
                     }
                 }
