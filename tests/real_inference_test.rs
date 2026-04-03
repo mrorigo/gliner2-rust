@@ -65,7 +65,7 @@ fn test_gliner2_tokenizer_download() {
 /// 4. Verifies the pipeline completes successfully
 #[test]
 fn test_gliner2_pipeline_with_real_tokenizer() {
-    use gliner2_rs::{ExtractorConfig, GLiNER2, SchemaBuilder};
+    use gliner2_rs::{ExtractorConfig, GLiNER2};
 
     let model_id = "bert-base-uncased";
     println!(
@@ -92,16 +92,6 @@ fn test_gliner2_pipeline_with_real_tokenizer() {
     // Create GLiNER2 engine
     println!("Creating GLiNER2 engine...");
     let engine = GLiNER2::new(&config).expect("Failed to create GLiNER2 engine");
-
-    // Create a schema for entity extraction
-    let schema = SchemaBuilder::new()
-        .entities(vec![
-            "person".to_string(),
-            "organization".to_string(),
-            "location".to_string(),
-        ])
-        .build()
-        .expect("Failed to build schema");
 
     // Test text
     let text =
@@ -153,7 +143,7 @@ fn test_gliner2_pipeline_with_real_tokenizer() {
 /// Test batch entity extraction with real tokenizer.
 #[test]
 fn test_gliner2_batch_extraction_with_real_tokenizer() {
-    use gliner2_rs::{ExtractorConfig, GLiNER2, SchemaBuilder};
+    use gliner2_rs::{ExtractorConfig, GLiNER2};
 
     let model_id = "bert-base-uncased";
     println!("Setting up GLiNER2 batch extraction with: {}", model_id);
@@ -176,12 +166,6 @@ fn test_gliner2_batch_extraction_with_real_tokenizer() {
 
     // Create engine
     let engine = GLiNER2::new(&config).expect("Failed to create GLiNER2 engine");
-
-    // Create schema
-    let schema = SchemaBuilder::new()
-        .entities(vec!["person".to_string(), "company".to_string()])
-        .build()
-        .expect("Failed to build schema");
 
     // Test texts
     let texts = vec![
@@ -225,8 +209,7 @@ fn test_gliner2_batch_extraction_with_real_tokenizer() {
 /// loads them, and runs entity extraction to prove real inference works.
 #[test]
 fn test_real_gliner2_model_loading() {
-    use gliner2_rs::{ExtractorConfig, GLiNER2, SchemaBuilder};
-    use std::path::Path;
+    use gliner2_rs::{ExtractorConfig, GLiNER2};
 
     let model_id = "fastino/gliner2-base-v1";
     println!(
@@ -266,16 +249,6 @@ fn test_real_gliner2_model_loading() {
         .expect("Failed to load model weights");
 
     println!("✅ Model weights loaded successfully!");
-
-    // Create a schema for entity extraction
-    let schema = SchemaBuilder::new()
-        .entities(vec![
-            "person".to_string(),
-            "organization".to_string(),
-            "location".to_string(),
-        ])
-        .build()
-        .expect("Failed to build schema");
 
     // Test text
     let text =
