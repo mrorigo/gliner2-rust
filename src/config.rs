@@ -333,8 +333,7 @@ impl ExtractorConfig {
     /// Load config from a JSON file.
     pub fn from_file(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| GlinerError::io(&path, e))?;
+        let content = std::fs::read_to_string(&path).map_err(|e| GlinerError::io(&path, e))?;
         let config: Self = serde_json::from_str(&content)
             .map_err(|e| GlinerError::config(format!("Failed to parse config file: {e}")))?;
         Ok(config)
@@ -345,8 +344,7 @@ impl ExtractorConfig {
         let path = path.into();
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| GlinerError::serialization(format!("Failed to serialize config: {e}")))?;
-        std::fs::write(&path, content)
-            .map_err(|e| GlinerError::io(&path, e))?;
+        std::fs::write(&path, content).map_err(|e| GlinerError::io(&path, e))?;
         Ok(())
     }
 
@@ -646,15 +644,10 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let config = ExtractorConfig::builder()
-            .hidden_size(0)
-            .build();
+        let config = ExtractorConfig::builder().hidden_size(0).build();
         assert!(config.is_err());
 
-        let config = ExtractorConfig::builder()
-            .fp16(true)
-            .bf16(true)
-            .build();
+        let config = ExtractorConfig::builder().fp16(true).bf16(true).build();
         assert!(config.is_err());
     }
 

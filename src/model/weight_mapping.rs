@@ -22,7 +22,7 @@ pub fn build_weight_map() -> HashMap<String, String> {
     // GLiNER2 stores: encoder.embeddings.word_embeddings.weight
     // Candle expects: embeddings.word_embeddings.weight (after "encoder" prefix is added)
     // The "encoder" prefix is handled by VarBuilder.pp("encoder")
-    
+
     // Span representation layer
     // GLiNER2: span_rep.span_rep_layer.project_start.0.weight
     // Our impl: span_rep.project_start (Linear layer)
@@ -145,8 +145,12 @@ mod tests {
 
     #[test]
     fn test_weight_classification() {
-        assert!(is_encoder_weight("encoder.embeddings.word_embeddings.weight"));
-        assert!(is_span_rep_weight("span_rep.span_rep_layer.project_start.0.weight"));
+        assert!(is_encoder_weight(
+            "encoder.embeddings.word_embeddings.weight"
+        ));
+        assert!(is_span_rep_weight(
+            "span_rep.span_rep_layer.project_start.0.weight"
+        ));
         assert!(is_classifier_weight("classifier.2.weight"));
         assert!(is_count_pred_weight("count_pred.2.weight"));
         assert!(is_count_pred_weight("count_embed.gru.weight_ih_l0"));

@@ -33,8 +33,7 @@ struct MultiHeadAttention {
 
 impl MultiHeadAttention {
     fn load(vb: VarBuilder, embed_dim: usize, num_heads: usize) -> Result<Self> {
-        let in_proj_weight = vb
-            .get((3 * embed_dim, embed_dim), "in_proj_weight")?;
+        let in_proj_weight = vb.get((3 * embed_dim, embed_dim), "in_proj_weight")?;
         let in_proj_bias = vb.get(3 * embed_dim, "in_proj_bias")?;
         let out_proj = candle_nn::linear(embed_dim, embed_dim, vb.pp("out_proj"))?;
 
@@ -64,11 +63,14 @@ impl MultiHeadAttention {
         let v = qkv.narrow(2, 2 * self.embed_dim, self.embed_dim)?;
 
         // Reshape for multi-head attention: (batch, heads, seq, head_dim)
-        let q = q.reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
+        let q = q
+            .reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
             .transpose(1, 2)?;
-        let k = k.reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
+        let k = k
+            .reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
             .transpose(1, 2)?;
-        let v = v.reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
+        let v = v
+            .reshape((batch_size, seq_len, self.num_heads, self.head_dim))?
             .transpose(1, 2)?;
 
         // Attention scores
@@ -85,9 +87,11 @@ impl MultiHeadAttention {
 
         // Context: (batch, seq, embed)
         let context = attn_probs.matmul(&v)?;
-        let context = context.transpose(1, 2)?
-            .contiguous()?
-            .reshape((batch_size, seq_len, self.embed_dim))?;
+        let context = context.transpose(1, 2)?.contiguous()?.reshape((
+            batch_size,
+            seq_len,
+            self.embed_dim,
+        ))?;
 
         self.out_proj.forward(&context)
     }
@@ -213,9 +217,7 @@ impl GRULayer {
             let ones_z = Tensor::full(1.0f32, exp_neg_z.dims(), exp_neg_z.device())?;
             let z_t = exp_neg_z.add(&ones_z)?.recip()?;
 
-            let n_pre = x_n
-                .add(&r_t.mul(&h_n)?)?
-                .broadcast_add(&b_in.add(&b_hn)?)?;
+            let n_pre = x_n.add(&r_t.mul(&h_n)?)?.broadcast_add(&b_in.add(&b_hn)?)?;
             let n_t = n_pre.tanh()?;
 
             let one_minus_z = z_t.ones_like()?.sub(&z_t)?;
@@ -264,7 +266,8 @@ impl CountEmbedLayer {
         let gru = GRULayer::load(vb.pp("gru"), hidden_size, hidden_size)?;
 
         // Load transformer components
-        let in_projector = candle_nn::linear(hidden_size, 128, vb.pp("transformer").pp("in_projector"))?;
+        let in_projector =
+            candle_nn::linear(hidden_size, 128, vb.pp("transformer").pp("in_projector"))?;
 
         let vb_transformer = vb.pp("transformer").pp("transformer");
         let mut transformer_layers = Vec::new();
@@ -279,9 +282,21 @@ impl CountEmbedLayer {
         }
 
         // Load output projector
-        let out_projector_0 = candle_nn::linear(896, hidden_size, vb.pp("transformer").pp("out_projector").pp("0"))?;
-        let out_projector_2 = candle_nn::linear(hidden_size, hidden_size, vb.pp("transformer").pp("out_projector").pp("2"))?;
-        let out_projector_4 = candle_nn::linear(hidden_size, hidden_size, vb.pp("transformer").pp("out_projector").pp("4"))?;
+        let out_projector_0 = candle_nn::linear(
+            896,
+            hidden_size,
+            vb.pp("transformer").pp("out_projector").pp("0"),
+        )?;
+        let out_projector_2 = candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("transformer").pp("out_projector").pp("2"),
+        )?;
+        let out_projector_4 = candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("transformer").pp("out_projector").pp("4"),
+        )?;
 
         Ok(Self {
             pos_embedding,
@@ -311,15 +326,21 @@ impl CountEmbedLayer {
         // Get position embeddings for each count position
         let pos_ids: Vec<u32> = (0..actual_count).map(|i| i as u32).collect();
         let pos_ids_tensor = Tensor::from_slice(&pos_ids, (actual_count,), &self.device)?;
-        let pos_embs = self.pos_embedding.forward(&pos_ids_tensor)?;  // (count, hidden)
+        let pos_embs = self.pos_embedding.forward(&pos_ids_tensor)?; // (count, hidden)
 
         // Expand entity embeddings: (num_types, hidden) -> (count, num_types, hidden)
-        let entity_embs_expanded = entity_embs.unsqueeze(0)?
-            .broadcast_as((actual_count, num_entity_types, self.hidden_size))?;
+        let entity_embs_expanded = entity_embs.unsqueeze(0)?.broadcast_as((
+            actual_count,
+            num_entity_types,
+            self.hidden_size,
+        ))?;
 
         // Expand position embeddings: (count, hidden) -> (count, num_types, hidden)
-        let pos_embs_expanded = pos_embs.unsqueeze(1)?
-            .broadcast_as((actual_count, num_entity_types, self.hidden_size))?;
+        let pos_embs_expanded = pos_embs.unsqueeze(1)?.broadcast_as((
+            actual_count,
+            num_entity_types,
+            self.hidden_size,
+        ))?;
 
         // GRU input is positional sequence (matching CountLSTMv2)
         let gru_input = pos_embs_expanded;

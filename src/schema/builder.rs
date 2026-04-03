@@ -168,12 +168,10 @@ impl SchemaBuilder {
             if !self.entity_order.contains(&name) {
                 self.entity_order.push(name.clone());
             }
-            self.schema.entities.push(
-                EntityDef::new(&name).with_description(&desc)
-            );
             self.schema
-                .entity_descriptions
-                .insert(name.clone(), desc);
+                .entities
+                .push(EntityDef::new(&name).with_description(&desc));
+            self.schema.entity_descriptions.insert(name.clone(), desc);
         }
         self
     }
@@ -405,16 +403,9 @@ impl SchemaBuilder {
     }
 
     /// Store entity metadata.
-    fn store_entity_metadata(
-        &mut self,
-        name: &str,
-        dtype: FieldDtype,
-        threshold: Option<f32>,
-    ) {
-        self.entity_metadata.insert(
-            name.to_string(),
-            EntityMetadata { dtype, threshold },
-        );
+    fn store_entity_metadata(&mut self, name: &str, dtype: FieldDtype, threshold: Option<f32>) {
+        self.entity_metadata
+            .insert(name.to_string(), EntityMetadata { dtype, threshold });
     }
 
     /// Store relation metadata.
@@ -478,11 +469,8 @@ impl EntityBuilder {
         };
 
         self.parent.schema.entities.push(entity);
-        self.parent.store_entity_metadata(
-            &self.name,
-            self.dtype,
-            self.threshold,
-        );
+        self.parent
+            .store_entity_metadata(&self.name, self.dtype, self.threshold);
         if let Some(desc) = self.description {
             self.parent
                 .schema
@@ -758,7 +746,8 @@ impl RelationBuilder {
         }
 
         self.parent.schema.relations.push(relation);
-        self.parent.store_relation_metadata(&self.name, self.threshold);
+        self.parent
+            .store_relation_metadata(&self.name, self.threshold);
         self.parent
     }
 }
@@ -771,11 +760,11 @@ mod tests {
     fn test_entity_builder() {
         let schema = SchemaBuilder::new()
             .entity("person")
-                .description("Names of people")
-                .threshold(0.6)
-                .done()
+            .description("Names of people")
+            .threshold(0.6)
+            .done()
             .entity("company")
-                .done()
+            .done()
             .build()
             .unwrap();
 
@@ -792,10 +781,13 @@ mod tests {
     #[test]
     fn test_classification_builder() {
         let schema = SchemaBuilder::new()
-            .classification("sentiment", vec!["positive".to_string(), "negative".to_string()])
-                .multi_label(false)
-                .threshold(0.4)
-                .done()
+            .classification(
+                "sentiment",
+                vec!["positive".to_string(), "negative".to_string()],
+            )
+            .multi_label(false)
+            .threshold(0.4)
+            .done()
             .build()
             .unwrap();
 
@@ -809,10 +801,14 @@ mod tests {
     fn test_structure_builder() {
         let schema = SchemaBuilder::new()
             .structure("product")
-                .field("name").dtype(FieldDtype::Str).done_field()
-                .field("price").done_field()
-                .field("colors").done_field()
-                .done_structure()
+            .field("name")
+            .dtype(FieldDtype::Str)
+            .done_field()
+            .field("price")
+            .done_field()
+            .field("colors")
+            .done_field()
+            .done_structure()
             .build()
             .unwrap();
 
@@ -827,9 +823,9 @@ mod tests {
     fn test_relation_builder() {
         let schema = SchemaBuilder::new()
             .relation("works_for")
-                .description("Employment relationship")
-                .threshold(0.5)
-                .done()
+            .description("Employment relationship")
+            .threshold(0.5)
+            .done()
             .build()
             .unwrap();
 
@@ -844,15 +840,25 @@ mod tests {
     #[test]
     fn test_complex_schema() {
         let schema = SchemaBuilder::new()
-            .entity("person").description("People").done()
-            .entity("company").done()
-            .classification("sentiment", vec!["positive".to_string(), "negative".to_string()])
-                .done()
+            .entity("person")
+            .description("People")
+            .done()
+            .entity("company")
+            .done()
+            .classification(
+                "sentiment",
+                vec!["positive".to_string(), "negative".to_string()],
+            )
+            .done()
             .structure("product")
-                .field("name").dtype(FieldDtype::Str).done_field()
-                .field("price").done_field()
-                .done_structure()
-            .relation("works_for").done()
+            .field("name")
+            .dtype(FieldDtype::Str)
+            .done_field()
+            .field("price")
+            .done_field()
+            .done_structure()
+            .relation("works_for")
+            .done()
             .build()
             .unwrap();
 
@@ -865,7 +871,11 @@ mod tests {
     #[test]
     fn test_entities_batch() {
         let schema = SchemaBuilder::new()
-            .entities(vec!["person".to_string(), "company".to_string(), "location".to_string()])
+            .entities(vec![
+                "person".to_string(),
+                "company".to_string(),
+                "location".to_string(),
+            ])
             .build()
             .unwrap();
 

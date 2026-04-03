@@ -30,6 +30,6 @@ pub mod types;
 // Re-export commonly used types for convenience
 pub use builder::SchemaBuilder;
 pub use types::{
-    ClassificationDef, EntityDef, FieldDef, FieldDtype, MatchMode,
-    RegexValidator, RelationDef, Schema, StructureDef, TaskType,
+    ClassificationDef, EntityDef, FieldDef, FieldDtype, MatchMode, RegexValidator, RelationDef,
+    Schema, StructureDef, TaskType,
 };

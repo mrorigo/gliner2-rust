@@ -8,7 +8,7 @@
 /// This test verifies the basic setup works without requiring model weights.
 #[test]
 fn test_gliner2_engine_creation() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     // Create config with bert-base-uncased for proper tokenizer compatibility
     let config = ExtractorConfig::new("bert-base-uncased");
@@ -16,7 +16,11 @@ fn test_gliner2_engine_creation() {
     // Create engine - this should work even without model weights
     // (uses random initialization for the encoder)
     let result = GLiNER2::new(&config);
-    assert!(result.is_ok(), "Failed to create GLiNER2 engine: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to create GLiNER2 engine: {:?}",
+        result.err()
+    );
 
     let engine = result.unwrap();
 
@@ -50,7 +54,7 @@ fn test_schema_building() {
 /// initialization, but the pipeline should complete without errors.
 #[test]
 fn test_entity_extraction_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     // Use bert-base-uncased for proper tokenizer compatibility
     let config = ExtractorConfig::new("bert-base-uncased");
@@ -65,13 +69,17 @@ fn test_entity_extraction_pipeline() {
         true,
         None,
     );
-    assert!(result.is_ok(), "Entity extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Entity extraction failed: {:?}",
+        result.err()
+    );
 }
 
 /// Test batch entity extraction.
 #[test]
 fn test_batch_entity_extraction() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     // Use bert-base-uncased for proper tokenizer compatibility
     let config = ExtractorConfig::new("bert-base-uncased");
@@ -85,14 +93,18 @@ fn test_batch_entity_extraction() {
     let result = engine.batch_extract_entities(
         &texts,
         &["person", "company"],
-        2,      // batch_size
-        None,   // threshold
-        1,      // num_workers
-        true,   // include_confidence
-        true,   // include_spans
-        None,   // max_len
+        2,    // batch_size
+        None, // threshold
+        1,    // num_workers
+        true, // include_confidence
+        true, // include_spans
+        None, // max_len
     );
-    assert!(result.is_ok(), "Batch extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Batch extraction failed: {:?}",
+        result.err()
+    );
 
     let results = result.unwrap();
     assert_eq!(results.len(), 2);
@@ -101,16 +113,17 @@ fn test_batch_entity_extraction() {
 /// Test classification pipeline.
 #[test]
 fn test_classification_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     // Use bert-base-uncased for proper tokenizer compatibility
     let config = ExtractorConfig::new("bert-base-uncased");
     let engine = GLiNER2::new(&config).expect("Failed to create engine");
 
     // classify_text takes tasks as &[(String, Vec<String>)]
-    let tasks = vec![
-        ("sentiment".to_string(), vec!["positive".to_string(), "negative".to_string()]),
-    ];
+    let tasks = vec![(
+        "sentiment".to_string(),
+        vec!["positive".to_string(), "negative".to_string()],
+    )];
 
     let result = engine.classify_text("I love this product!", &tasks, None, false, None);
     assert!(result.is_ok(), "Classification failed: {:?}", result.err());
@@ -131,7 +144,7 @@ fn test_classification_pipeline() {
 /// Test relation extraction pipeline returns relation_extraction payload.
 #[test]
 fn test_relation_extraction_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     let config = ExtractorConfig::new("bert-base-uncased");
     let engine = GLiNER2::new(&config).expect("Failed to create engine");
@@ -144,7 +157,11 @@ fn test_relation_extraction_pipeline() {
         true,
         None,
     );
-    assert!(result.is_ok(), "Relation extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Relation extraction failed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     assert!(
@@ -156,16 +173,18 @@ fn test_relation_extraction_pipeline() {
 /// Test structure extraction pipeline returns named structure payload.
 #[test]
 fn test_structure_extraction_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig, SchemaBuilder};
+    use gliner2_rust::{ExtractorConfig, GLiNER2, SchemaBuilder};
 
     let config = ExtractorConfig::new("bert-base-uncased");
     let engine = GLiNER2::new(&config).expect("Failed to create engine");
 
     let schema = SchemaBuilder::new()
         .structure("product_info")
-            .field("name").done_field()
-            .field("company").done_field()
-            .done_structure()
+        .field("name")
+        .done_field()
+        .field("company")
+        .done_field()
+        .done_structure()
         .build()
         .expect("Failed to build structure schema");
 
@@ -177,7 +196,11 @@ fn test_structure_extraction_pipeline() {
         true,
         None,
     );
-    assert!(result.is_ok(), "Structure extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Structure extraction failed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     assert!(
@@ -189,15 +212,17 @@ fn test_structure_extraction_pipeline() {
 /// Test relation-level threshold metadata influences decoding.
 #[test]
 fn test_relation_threshold_metadata_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
     use gliner2_rust::schema::builder::SchemaBuilder;
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     let config = ExtractorConfig::new("bert-base-uncased");
     let engine = GLiNER2::new(&config).expect("Failed to create engine");
 
     // Threshold at 1.0 should suppress all relation spans after sigmoid.
     let schema = SchemaBuilder::new()
-        .relation("works_for").threshold(1.0).done()
+        .relation("works_for")
+        .threshold(1.0)
+        .done()
         .build()
         .expect("Failed to build relation schema");
 
@@ -209,7 +234,11 @@ fn test_relation_threshold_metadata_pipeline() {
         true,
         None,
     );
-    assert!(result.is_ok(), "Relation extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Relation extraction failed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     let rels = result
@@ -229,18 +258,21 @@ fn test_relation_threshold_metadata_pipeline() {
 /// Test structure dtype='str' returns a single value (or null), not a list.
 #[test]
 fn test_structure_str_dtype_pipeline() {
-    use gliner2_rust::{GLiNER2, ExtractorConfig};
     use gliner2_rust::schema::builder::SchemaBuilder;
     use gliner2_rust::schema::types::FieldDtype;
+    use gliner2_rust::{ExtractorConfig, GLiNER2};
 
     let config = ExtractorConfig::new("bert-base-uncased");
     let engine = GLiNER2::new(&config).expect("Failed to create engine");
 
     let schema = SchemaBuilder::new()
         .structure("product_info")
-            .field("name").dtype(FieldDtype::Str).done_field()
-            .field("company").done_field()
-            .done_structure()
+        .field("name")
+        .dtype(FieldDtype::Str)
+        .done_field()
+        .field("company")
+        .done_field()
+        .done_structure()
         .build()
         .expect("Failed to build structure schema");
 
@@ -252,7 +284,11 @@ fn test_structure_str_dtype_pipeline() {
         true,
         None,
     );
-    assert!(result.is_ok(), "Structure extraction failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Structure extraction failed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     let instances = result
@@ -341,10 +377,10 @@ fn test_config_validation() {
 /// Test that the extractor can run forward pass.
 #[test]
 fn test_extractor_forward_pass() {
-    use gliner2_rust::model::Extractor;
-    use gliner2_rust::config::ExtractorConfig;
-    use gliner2_rust::batch::PreprocessedBatchBuilder;
     use candle_core::{Device, Tensor};
+    use gliner2_rust::batch::PreprocessedBatchBuilder;
+    use gliner2_rust::config::ExtractorConfig;
+    use gliner2_rust::model::Extractor;
 
     let config = ExtractorConfig::default();
     let extractor = Extractor::new(&config).expect("Failed to create extractor");
@@ -357,11 +393,19 @@ fn test_extractor_forward_pass() {
         .input_ids(input_ids)
         .attention_mask(attention_mask)
         .schema_counts(vec![1, 1])
-        .task_types(vec![vec!["entities".to_string()], vec!["entities".to_string()]])
-        .text_tokens(vec![vec!["apple".to_string(), "inc".to_string()], vec!["hello".to_string()]])
-        .schema_tokens_list(vec![
-            vec![vec!["(".to_string(), "[P]".to_string(), "entities".to_string()]]
+        .task_types(vec![
+            vec!["entities".to_string()],
+            vec!["entities".to_string()],
         ])
+        .text_tokens(vec![
+            vec!["apple".to_string(), "inc".to_string()],
+            vec!["hello".to_string()],
+        ])
+        .schema_tokens_list(vec![vec![vec![
+            "(".to_string(),
+            "[P]".to_string(),
+            "entities".to_string(),
+        ]]])
         .start_mappings(vec![vec![0, 6], vec![0]])
         .end_mappings(vec![vec![5, 10], vec![5]])
         .original_texts(vec!["Apple Inc.".to_string(), "Hello".to_string()])

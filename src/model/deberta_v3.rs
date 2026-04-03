@@ -6,7 +6,7 @@
 //! - Relative position embeddings (rel_embeddings)
 //! - No token_type_embeddings
 
-use candle_core::{DType, Device, Result, Tensor, D};
+use candle_core::{D, DType, Device, Result, Tensor};
 use candle_nn::{Embedding, LayerNorm, Linear, Module, VarBuilder};
 
 #[derive(Clone)]
@@ -66,7 +66,10 @@ impl DebertaV3Embeddings {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        Ok(Self { word_embeddings, layer_norm })
+        Ok(Self {
+            word_embeddings,
+            layer_norm,
+        })
     }
 
     fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
@@ -96,11 +99,24 @@ impl DebertaV3Attention {
         let vb_out = vb.pp("attention").pp("output");
         let attention_head_size = config.hidden_size / config.num_attention_heads;
 
-        let query_proj = candle_nn::linear(config.hidden_size, config.hidden_size, vb_self.pp("query_proj"))?;
-        let key_proj = candle_nn::linear(config.hidden_size, config.hidden_size, vb_self.pp("key_proj"))?;
-        let value_proj = candle_nn::linear(config.hidden_size, config.hidden_size, vb_self.pp("value_proj"))?;
+        let query_proj = candle_nn::linear(
+            config.hidden_size,
+            config.hidden_size,
+            vb_self.pp("query_proj"),
+        )?;
+        let key_proj = candle_nn::linear(
+            config.hidden_size,
+            config.hidden_size,
+            vb_self.pp("key_proj"),
+        )?;
+        let value_proj = candle_nn::linear(
+            config.hidden_size,
+            config.hidden_size,
+            vb_self.pp("value_proj"),
+        )?;
 
-        let output_dense = candle_nn::linear(config.hidden_size, config.hidden_size, vb_out.pp("dense"))?;
+        let output_dense =
+            candle_nn::linear(config.hidden_size, config.hidden_size, vb_out.pp("dense"))?;
         let output_layer_norm = candle_nn::layer_norm(
             config.hidden_size,
             config.layer_norm_eps,
@@ -108,8 +124,11 @@ impl DebertaV3Attention {
         )?;
 
         Ok(Self {
-            query_proj, key_proj, value_proj,
-            output_dense, output_layer_norm,
+            query_proj,
+            key_proj,
+            value_proj,
+            output_dense,
+            output_layer_norm,
             num_attention_heads: config.num_attention_heads,
             attention_head_size,
             max_relative_positions: config.max_relative_positions,
@@ -119,7 +138,12 @@ impl DebertaV3Attention {
         })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor, rel_embeddings: Option<&Tensor>) -> Result<Tensor> {
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        rel_embeddings: Option<&Tensor>,
+    ) -> Result<Tensor> {
         let input_tensor = hidden_states.clone();
         let (batch_size, seq_len, hidden_size) = hidden_states.dims3()?;
 
@@ -129,9 +153,30 @@ impl DebertaV3Attention {
         let value_states = self.value_proj.forward(hidden_states)?;
 
         // Reshape for multi-head attention: (batch, seq, heads, head_size) -> (batch, heads, seq, head_size)
-        let query_layer = query_states.reshape((batch_size, seq_len, self.num_attention_heads, self.attention_head_size))?.transpose(1, 2)?;
-        let key_layer = key_states.reshape((batch_size, seq_len, self.num_attention_heads, self.attention_head_size))?.transpose(1, 2)?;
-        let value_layer = value_states.reshape((batch_size, seq_len, self.num_attention_heads, self.attention_head_size))?.transpose(1, 2)?;
+        let query_layer = query_states
+            .reshape((
+                batch_size,
+                seq_len,
+                self.num_attention_heads,
+                self.attention_head_size,
+            ))?
+            .transpose(1, 2)?;
+        let key_layer = key_states
+            .reshape((
+                batch_size,
+                seq_len,
+                self.num_attention_heads,
+                self.attention_head_size,
+            ))?
+            .transpose(1, 2)?;
+        let value_layer = value_states
+            .reshape((
+                batch_size,
+                seq_len,
+                self.num_attention_heads,
+                self.attention_head_size,
+            ))?
+            .transpose(1, 2)?;
 
         // Compute scale factor based on pos_att_type
         let mut scale_factor = 1.0f64;
@@ -150,7 +195,12 @@ impl DebertaV3Attention {
         // Add disentangled attention bias if relative embeddings are available
         if let Some(rel_emb) = rel_embeddings {
             let rel_att = self.disentangled_attention_bias(
-                &query_layer, &key_layer, rel_emb, scale, batch_size, seq_len,
+                &query_layer,
+                &key_layer,
+                rel_emb,
+                scale,
+                batch_size,
+                seq_len,
             )?;
             attention_scores = attention_scores.add(&rel_att)?;
         }
@@ -185,7 +235,11 @@ impl DebertaV3Attention {
 
         // Build relative position matrix: (1, seq, seq)
         let relative_pos = build_relative_position(
-            seq_len, seq_len, self.position_buckets, self.max_relative_positions, query_layer.device(),
+            seq_len,
+            seq_len,
+            self.position_buckets,
+            self.max_relative_positions,
+            query_layer.device(),
         )?;
 
         let mut score = Tensor::zeros(
@@ -197,7 +251,11 @@ impl DebertaV3Attention {
         // Content-to-Position (c2p): query @ pos_key^T
         if self.pos_att_type.iter().any(|s| s == "c2p") {
             let c2p_att = self.content_to_position(
-                query_layer, &rel_embeddings, &relative_pos, scale, batch_size,
+                query_layer,
+                &rel_embeddings,
+                &relative_pos,
+                scale,
+                batch_size,
             )?;
             score = score.add(&c2p_att)?;
         }
@@ -205,7 +263,11 @@ impl DebertaV3Attention {
         // Position-to-Content (p2c): key @ pos_query^T
         if self.pos_att_type.iter().any(|s| s == "p2c") {
             let p2c_att = self.position_to_content(
-                key_layer, &rel_embeddings, &relative_pos, scale, batch_size,
+                key_layer,
+                &rel_embeddings,
+                &relative_pos,
+                scale,
+                batch_size,
             )?;
             score = score.add(&p2c_att)?;
         }
@@ -226,7 +288,12 @@ impl DebertaV3Attention {
         let pos_key_layer = if self.share_att_key {
             // Reuse key_proj weights
             let pos_key = self.key_proj.forward(rel_embeddings)?;
-            pos_key.reshape((rel_embeddings.dims()[0], self.num_attention_heads, self.attention_head_size))?
+            pos_key
+                .reshape((
+                    rel_embeddings.dims()[0],
+                    self.num_attention_heads,
+                    self.attention_head_size,
+                ))?
                 .transpose(0, 1)?
         } else {
             candle_core::bail!("share_att_key=false not implemented")
@@ -234,7 +301,10 @@ impl DebertaV3Attention {
 
         // Repeat for batch size: (heads, pos_emb_size, head_size) -> (batch, heads, pos_emb_size, head_size)
         let pos_key_layer = pos_key_layer.unsqueeze(0)?.broadcast_as((
-            batch_size, self.num_attention_heads, pos_key_layer.dims()[1], self.attention_head_size,
+            batch_size,
+            self.num_attention_heads,
+            pos_key_layer.dims()[1],
+            self.attention_head_size,
         ))?;
 
         // query @ pos_key^T: (batch, heads, seq, head_size) @ (batch, heads, head_size, pos_emb_size)
@@ -243,7 +313,11 @@ impl DebertaV3Attention {
         // Gather using relative positions
         let att_span = rel_embeddings.dims()[0] / 2;
         let relative_pos_f = relative_pos.to_dtype(DType::F32)?;
-        let att_span_tensor = Tensor::full(att_span as f32, relative_pos_f.dims(), relative_pos_f.device())?;
+        let att_span_tensor = Tensor::full(
+            att_span as f32,
+            relative_pos_f.dims(),
+            relative_pos_f.device(),
+        )?;
         let shifted_pos = relative_pos_f.add(&att_span_tensor)?;
         let max_val = (att_span * 2 - 1) as f32;
         let shifted_pos = shifted_pos.clamp(0.0, max_val)?;
@@ -267,7 +341,12 @@ impl DebertaV3Attention {
         let pos_query_layer = if self.share_att_key {
             // Reuse query_proj weights
             let pos_query = self.query_proj.forward(rel_embeddings)?;
-            pos_query.reshape((rel_embeddings.dims()[0], self.num_attention_heads, self.attention_head_size))?
+            pos_query
+                .reshape((
+                    rel_embeddings.dims()[0],
+                    self.num_attention_heads,
+                    self.attention_head_size,
+                ))?
                 .transpose(0, 1)?
         } else {
             candle_core::bail!("share_att_key=false not implemented")
@@ -275,7 +354,10 @@ impl DebertaV3Attention {
 
         // Repeat for batch size
         let pos_query_layer = pos_query_layer.unsqueeze(0)?.broadcast_as((
-            batch_size, self.num_attention_heads, pos_query_layer.dims()[1], self.attention_head_size,
+            batch_size,
+            self.num_attention_heads,
+            pos_query_layer.dims()[1],
+            self.attention_head_size,
         ))?;
 
         // key @ pos_query^T: (batch, heads, seq, head_size) @ (batch, heads, head_size, pos_emb_size)
@@ -286,7 +368,11 @@ impl DebertaV3Attention {
         let relative_pos_f = relative_pos.to_dtype(DType::F32)?;
         let neg_one = Tensor::full(-1.0f32, relative_pos_f.dims(), relative_pos_f.device())?;
         let neg_rel_pos = relative_pos_f.mul(&neg_one)?;
-        let att_span_tensor = Tensor::full(att_span as f32, relative_pos_f.dims(), relative_pos_f.device())?;
+        let att_span_tensor = Tensor::full(
+            att_span as f32,
+            relative_pos_f.dims(),
+            relative_pos_f.device(),
+        )?;
         let shifted_pos = neg_rel_pos.add(&att_span_tensor)?;
         let max_val = (att_span * 2 - 1) as f32;
         let shifted_pos = shifted_pos.clamp(0.0, max_val)?;
@@ -310,15 +396,27 @@ impl DebertaV3Intermediate {
     fn load(vb: VarBuilder, config: &DebertaV3Config) -> Result<Self> {
         let vb_int = vb.pp("intermediate");
         let vb_out = vb.pp("output");
-        let dense = candle_nn::linear(config.hidden_size, config.intermediate_size, vb_int.pp("dense"))?;
-        let output_dense = candle_nn::linear(config.intermediate_size, config.hidden_size, vb_out.pp("dense"))?;
+        let dense = candle_nn::linear(
+            config.hidden_size,
+            config.intermediate_size,
+            vb_int.pp("dense"),
+        )?;
+        let output_dense = candle_nn::linear(
+            config.intermediate_size,
+            config.hidden_size,
+            vb_out.pp("dense"),
+        )?;
         let output_layer_norm = candle_nn::layer_norm(
             config.hidden_size,
             config.layer_norm_eps,
             vb_out.pp("LayerNorm"),
         )?;
 
-        Ok(Self { dense, output_dense, output_layer_norm })
+        Ok(Self {
+            dense,
+            output_dense,
+            output_layer_norm,
+        })
     }
 
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
@@ -341,11 +439,21 @@ impl DebertaV3Layer {
     fn load(vb: VarBuilder, config: &DebertaV3Config) -> Result<Self> {
         let attention = DebertaV3Attention::load(vb.clone(), config)?;
         let intermediate = DebertaV3Intermediate::load(vb, config)?;
-        Ok(Self { attention, intermediate })
+        Ok(Self {
+            attention,
+            intermediate,
+        })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor, rel_embeddings: Option<&Tensor>) -> Result<Tensor> {
-        let hidden = self.attention.forward(hidden_states, attention_mask, rel_embeddings)?;
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        rel_embeddings: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let hidden = self
+            .attention
+            .forward(hidden_states, attention_mask, rel_embeddings)?;
         self.intermediate.forward(&hidden)
     }
 }
@@ -369,10 +477,19 @@ impl DebertaV3Encoder {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        Ok(Self { layers, final_layer_norm, num_attention_heads: config.num_attention_heads })
+        Ok(Self {
+            layers,
+            final_layer_norm,
+            num_attention_heads: config.num_attention_heads,
+        })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor, rel_embeddings: Option<&Tensor>) -> Result<Tensor> {
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        rel_embeddings: Option<&Tensor>,
+    ) -> Result<Tensor> {
         let mut hidden = hidden_states.clone();
         for layer in &self.layers {
             hidden = layer.forward(&hidden, attention_mask, rel_embeddings)?;
@@ -434,9 +551,8 @@ impl DebertaV3Model {
                 // (batch, seq) -> (batch, 1, 1, seq)
                 let extended_attention_mask = attention_mask.unsqueeze(1)?.unsqueeze(2)?;
                 // Pairwise validity: valid query AND valid key
-                let pairwise_attention_mask = extended_attention_mask.broadcast_mul(
-                    &extended_attention_mask.squeeze(2)?.unsqueeze(3)?,
-                )?;
+                let pairwise_attention_mask = extended_attention_mask
+                    .broadcast_mul(&extended_attention_mask.squeeze(2)?.unsqueeze(3)?)?;
                 // Broadcast to (batch, heads, seq, seq)
                 pairwise_attention_mask.broadcast_as((
                     pairwise_attention_mask.dims()[0],
@@ -462,10 +578,16 @@ impl DebertaV3Model {
             .broadcast_mul(&Tensor::try_from(f32::MIN)?.to_device(attention_mask.device())?)?;
 
         let rel_embeddings = self.rel_embeddings.as_ref().map(|e| e.embeddings());
-        self.encoder.forward(&embedding_output, &attention_mask, rel_embeddings.as_ref().map(|t| *t))
+        self.encoder.forward(
+            &embedding_output,
+            &attention_mask,
+            rel_embeddings.as_ref().map(|t| *t),
+        )
     }
 
-    pub fn device(&self) -> &Device { &self.device }
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
 }
 
 /// Build relative position matrix (aligned with HF/candle DeBERTa implementation).
@@ -484,11 +606,8 @@ fn build_relative_position(
     let mut rel_pos = k_ids.broadcast_sub(&q_ids)?;
 
     if position_buckets > 0 && max_relative_positions > 0 {
-        rel_pos = make_log_bucket_position(
-            &rel_pos,
-            position_buckets,
-            max_relative_positions as usize,
-        )?;
+        rel_pos =
+            make_log_bucket_position(&rel_pos, position_buckets, max_relative_positions as usize)?;
     }
 
     rel_pos = rel_pos.to_dtype(DType::I64)?;
@@ -532,9 +651,8 @@ fn make_log_bucket_position(
     )?
     .log()?;
     let first_div_second = first_log.broadcast_div(&second_log)?;
-    let to_ceil = first_div_second.broadcast_mul(
-        Tensor::from_slice(&[(mid_f - 1.0)], (1,), rel_pos.device())?.as_ref(),
-    )?;
+    let to_ceil = first_div_second
+        .broadcast_mul(Tensor::from_slice(&[(mid_f - 1.0)], (1,), rel_pos.device())?.as_ref())?;
     let ceil = to_ceil.ceil()?;
     let log_pos = ceil.broadcast_add(&mid_tensor)?;
 

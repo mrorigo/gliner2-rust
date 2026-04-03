@@ -29,7 +29,7 @@
 
 use std::path::Path;
 
-use candle_core::{Device, DType};
+use candle_core::{DType, Device};
 use candle_nn::VarBuilder;
 
 use crate::config::ExtractorConfig;
@@ -83,16 +83,17 @@ impl ModelLoader {
             ));
         }
 
-        // Load weights via candle's VarBuilder
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &self.device)
-        }
-        .map_err(|e| {
-            GlinerError::model_loading_with_path(
-                format!("Failed to load safetensors: {e}"),
-                path,
-            )
-        })?;
+        // Load weights via candle's VarBuilder.
+        // SAFETY: `path` is validated to exist, and candle performs safetensors
+        // parsing with bounds checks before exposing tensors. This call only
+        // memory-maps immutable files and returns a `Result` on parse failure.
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &self.device) }
+            .map_err(|e| {
+                GlinerError::model_loading_with_path(
+                    format!("Failed to load safetensors: {e}"),
+                    path,
+                )
+            })?;
 
         // Rebuild model components with loaded weights
         self.rebuild_model(vb, model)?;
@@ -123,13 +124,15 @@ impl ModelLoader {
 
         let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_ref()).collect();
 
-        // Load all shards via candle's VarBuilder
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&path_refs, DType::F32, &self.device)
-        }
-        .map_err(|e| {
-            GlinerError::model_loading(format!("Failed to load sharded safetensors: {e}"))
-        })?;
+        // Load all shards via candle's VarBuilder.
+        // SAFETY: each path comes from `paths` and is only used for read-only
+        // memory mapping. candle validates safetensors metadata and tensor
+        // bounds and returns an error if any shard is invalid.
+        let vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&path_refs, DType::F32, &self.device) }
+                .map_err(|e| {
+                    GlinerError::model_loading(format!("Failed to load sharded safetensors: {e}"))
+                })?;
 
         // Rebuild model components with loaded weights
         self.rebuild_model(vb, model)?;
@@ -239,7 +242,10 @@ pub mod utils {
             if let Ok(entries) = std::fs::read_dir(path) {
                 for entry in entries.flatten() {
                     let entry_path = entry.path();
-                    if entry_path.extension().is_some_and(|ext| ext == "safetensors") {
+                    if entry_path
+                        .extension()
+                        .is_some_and(|ext| ext == "safetensors")
+                    {
                         files.push(entry_path);
                     }
                 }

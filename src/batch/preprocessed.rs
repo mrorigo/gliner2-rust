@@ -5,8 +5,8 @@
 //! `PreprocessedBatch` dataclass and provides methods for device transfer,
 //! memory pinning, and field access.
 
-use serde_json::Value as JsonValue;
 use candle_core::Tensor;
+use serde_json::Value as JsonValue;
 
 use crate::error::{GlinerError, Result};
 
@@ -181,17 +181,22 @@ impl PreprocessedBatch {
     /// # Returns
     ///
     /// A new `PreprocessedBatch` with tensors on the target device.
-    pub fn to(&self, device: candle_core::Device, dtype: Option<candle_core::DType>) -> Result<Self> {
+    pub fn to(
+        &self,
+        device: candle_core::Device,
+        dtype: Option<candle_core::DType>,
+    ) -> Result<Self> {
         let cast_tensor = |tensor: &Tensor, is_int: bool| -> Result<Tensor> {
             let mut t = tensor.to_device(&device).map_err(|e| {
                 GlinerError::model_loading(format!("Failed to move tensor to device: {e}"))
             })?;
             if let Some(dt) = dtype
-                && !is_int {
-                    t = t.to_dtype(dt).map_err(|e| {
-                        GlinerError::model_loading(format!("Failed to cast tensor dtype: {e}"))
-                    })?;
-                }
+                && !is_int
+            {
+                t = t.to_dtype(dt).map_err(|e| {
+                    GlinerError::model_loading(format!("Failed to cast tensor dtype: {e}"))
+                })?;
+            }
             Ok(t)
         };
 
@@ -284,35 +289,50 @@ impl PreprocessedBatch {
                 .as_ref()
                 .map(|t| JsonValue::String(format!("Tensor(shape={:?})", t.dims())))
                 .unwrap_or(JsonValue::Null)),
-            "mapped_indices" => serde_json::to_value(&self.mapped_indices)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize mapped_indices: {e}"))),
-            "schema_counts" => serde_json::to_value(&self.schema_counts)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize schema_counts: {e}"))),
-            "original_lengths" => serde_json::to_value(&self.original_lengths)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize original_lengths: {e}"))),
+            "mapped_indices" => serde_json::to_value(&self.mapped_indices).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize mapped_indices: {e}"))
+            }),
+            "schema_counts" => serde_json::to_value(&self.schema_counts).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize schema_counts: {e}"))
+            }),
+            "original_lengths" => serde_json::to_value(&self.original_lengths).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize original_lengths: {e}"))
+            }),
             "structure_labels" => Ok(JsonValue::Array(
                 self.structure_labels
                     .iter()
                     .map(|labels| JsonValue::Array(labels.clone()))
                     .collect(),
             )),
-            "task_types" => serde_json::to_value(&self.task_types)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize task_types: {e}"))),
-            "text_tokens" => serde_json::to_value(&self.text_tokens)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize text_tokens: {e}"))),
-            "schema_tokens_list" => serde_json::to_value(&self.schema_tokens_list)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize schema_tokens_list: {e}"))),
-            "start_mappings" => serde_json::to_value(&self.start_mappings)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize start_mappings: {e}"))),
-            "end_mappings" => serde_json::to_value(&self.end_mappings)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize end_mappings: {e}"))),
-            "original_texts" => serde_json::to_value(&self.original_texts)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize original_texts: {e}"))),
+            "task_types" => serde_json::to_value(&self.task_types).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize task_types: {e}"))
+            }),
+            "text_tokens" => serde_json::to_value(&self.text_tokens).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize text_tokens: {e}"))
+            }),
+            "schema_tokens_list" => serde_json::to_value(&self.schema_tokens_list).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize schema_tokens_list: {e}"))
+            }),
+            "start_mappings" => serde_json::to_value(&self.start_mappings).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize start_mappings: {e}"))
+            }),
+            "end_mappings" => serde_json::to_value(&self.end_mappings).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize end_mappings: {e}"))
+            }),
+            "original_texts" => serde_json::to_value(&self.original_texts).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize original_texts: {e}"))
+            }),
             "original_schemas" => Ok(JsonValue::Array(self.original_schemas.clone())),
-            "text_word_counts" => serde_json::to_value(&self.text_word_counts)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize text_word_counts: {e}"))),
-            "schema_special_indices" => serde_json::to_value(&self.schema_special_indices)
-                .map_err(|e| GlinerError::serialization(format!("Failed to serialize schema_special_indices: {e}"))),
+            "text_word_counts" => serde_json::to_value(&self.text_word_counts).map_err(|e| {
+                GlinerError::serialization(format!("Failed to serialize text_word_counts: {e}"))
+            }),
+            "schema_special_indices" => {
+                serde_json::to_value(&self.schema_special_indices).map_err(|e| {
+                    GlinerError::serialization(format!(
+                        "Failed to serialize schema_special_indices: {e}"
+                    ))
+                })
+            }
             _ => Err(GlinerError::validation(format!(
                 "PreprocessedBatch does not have field '{key}'"
             ))),
@@ -660,8 +680,10 @@ mod tests {
     use super::*;
 
     fn create_test_batch() -> PreprocessedBatch {
-        let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4, 5, 6], (2, 3), &candle_core::Device::Cpu).unwrap();
-        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &candle_core::Device::Cpu).unwrap();
+        let input_ids =
+            Tensor::from_slice(&[1u32, 2, 3, 4, 5, 6], (2, 3), &candle_core::Device::Cpu).unwrap();
+        let attention_mask =
+            Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &candle_core::Device::Cpu).unwrap();
 
         PreprocessedBatch::new(
             input_ids,
@@ -674,13 +696,22 @@ mod tests {
             vec![3, 2],
             vec![vec![], vec![]],
             vec![vec!["entities".to_string()], vec!["entities".to_string()]],
-            vec![vec!["apple".to_string(), "inc".to_string()], vec!["hello".to_string()]],
             vec![
-                vec![vec!["(".to_string(), "[P]".to_string(), "entities".to_string()]]],
+                vec!["apple".to_string(), "inc".to_string()],
+                vec!["hello".to_string()],
+            ],
+            vec![vec![vec![
+                "(".to_string(),
+                "[P]".to_string(),
+                "entities".to_string(),
+            ]]],
             vec![vec![0, 1, 2], vec![0, 1, 2]],
             vec![vec![5, 8, 12], vec![0, 3, 7]],
             vec!["Apple Inc.".to_string(), "Hello".to_string()],
-            vec![JsonValue::Object(serde_json::Map::new()), JsonValue::Object(serde_json::Map::new())],
+            vec![
+                JsonValue::Object(serde_json::Map::new()),
+                JsonValue::Object(serde_json::Map::new()),
+            ],
             None,
             vec![2, 1],
             vec![vec![vec![0, 1, 2]], vec![vec![0, 1]]],
@@ -766,18 +797,25 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4], (2, 2), &candle_core::Device::Cpu).unwrap();
-        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 0], (2, 2), &candle_core::Device::Cpu).unwrap();
+        let input_ids =
+            Tensor::from_slice(&[1u32, 2, 3, 4], (2, 2), &candle_core::Device::Cpu).unwrap();
+        let attention_mask =
+            Tensor::from_slice(&[1u32, 1, 1, 0], (2, 2), &candle_core::Device::Cpu).unwrap();
 
         let batch = PreprocessedBatchBuilder::new()
             .input_ids(input_ids)
             .attention_mask(attention_mask)
             .schema_counts(vec![1, 1])
-            .task_types(vec![vec!["entities".to_string()], vec!["entities".to_string()]])
+            .task_types(vec![
+                vec!["entities".to_string()],
+                vec!["entities".to_string()],
+            ])
             .text_tokens(vec![vec!["hello".to_string()], vec!["world".to_string()]])
-            .schema_tokens_list(vec![
-                vec![vec!["(".to_string(), "[P]".to_string(), "entities".to_string()]]],
-            )
+            .schema_tokens_list(vec![vec![vec![
+                "(".to_string(),
+                "[P]".to_string(),
+                "entities".to_string(),
+            ]]])
             .start_mappings(vec![vec![0], vec![0]])
             .end_mappings(vec![vec![5], vec![5]])
             .original_texts(vec!["hello".to_string(), "world".to_string()])

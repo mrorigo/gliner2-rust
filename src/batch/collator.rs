@@ -23,8 +23,8 @@
 //! let batch = collator.collate(&samples)?;
 //! ```
 
-use serde_json::Value as JsonValue;
 use candle_core::{Device, Tensor};
+use serde_json::Value as JsonValue;
 use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::batch::preprocessed::{PreprocessedBatch, TokenMapping};
@@ -160,9 +160,7 @@ impl ExtractorCollator {
     /// A `PreprocessedBatch` ready for model inference.
     pub fn collate(&self, samples: &[CollateSample]) -> Result<PreprocessedBatch> {
         if samples.is_empty() {
-            return Err(GlinerError::batch_processing(
-                "Cannot collate empty batch",
-            ));
+            return Err(GlinerError::batch_processing("Cannot collate empty batch"));
         }
 
         // Process each sample
@@ -180,7 +178,8 @@ impl ExtractorCollator {
         let mut all_original_schemas: Vec<JsonValue> = Vec::with_capacity(samples.len());
         let mut all_text_word_indices: Vec<Vec<i64>> = Vec::with_capacity(samples.len());
         let mut all_text_word_counts: Vec<usize> = Vec::with_capacity(samples.len());
-        let mut all_schema_special_indices: Vec<Vec<Vec<usize>>> = Vec::with_capacity(samples.len());
+        let mut all_schema_special_indices: Vec<Vec<Vec<usize>>> =
+            Vec::with_capacity(samples.len());
 
         for (text, schema) in samples {
             let processed = self.process_sample(text, schema)?;
@@ -221,14 +220,29 @@ impl ExtractorCollator {
         }
 
         // Create tensors
-        let input_ids_tensor = Tensor::from_slice(&padded_input_ids, (samples.len(), max_seq_len), &Device::Cpu)
-            .map_err(|e| GlinerError::model_loading(format!("Failed to create input_ids tensor: {e}")))?;
+        let input_ids_tensor = Tensor::from_slice(
+            &padded_input_ids,
+            (samples.len(), max_seq_len),
+            &Device::Cpu,
+        )
+        .map_err(|e| {
+            GlinerError::model_loading(format!("Failed to create input_ids tensor: {e}"))
+        })?;
 
-        let attention_mask_tensor = Tensor::from_slice(&attention_mask, (samples.len(), max_seq_len), &Device::Cpu)
-            .map_err(|e| GlinerError::model_loading(format!("Failed to create attention_mask tensor: {e}")))?;
+        let attention_mask_tensor =
+            Tensor::from_slice(&attention_mask, (samples.len(), max_seq_len), &Device::Cpu)
+                .map_err(|e| {
+                    GlinerError::model_loading(format!(
+                        "Failed to create attention_mask tensor: {e}"
+                    ))
+                })?;
 
         // Create text word indices tensor if all samples have the same max words
-        let max_words = all_text_word_indices.iter().map(|idx| idx.len()).max().unwrap_or(0);
+        let max_words = all_text_word_indices
+            .iter()
+            .map(|idx| idx.len())
+            .max()
+            .unwrap_or(0);
         let text_word_indices_tensor = if max_words > 0 {
             let mut flat_indices: Vec<i64> = Vec::with_capacity(samples.len() * max_words);
             for indices in &all_text_word_indices {
@@ -237,7 +251,11 @@ impl ExtractorCollator {
             }
             Some(
                 Tensor::from_slice(&flat_indices, (samples.len(), max_words), &Device::Cpu)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create text_word_indices tensor: {e}")))?,
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to create text_word_indices tensor: {e}"
+                        ))
+                    })?,
             )
         } else {
             None
@@ -460,70 +478,76 @@ impl ExtractorCollator {
 
         // Parse classifications
         if let Some(classifications) = schema.get("classifications")
-            && let Some(cls_array) = classifications.as_array() {
-                for cls in cls_array {
-                    if let Some(cls_obj) = cls.as_object()
-                        && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
-                            let labels = cls_obj
-                                .get("labels")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|v| v.as_str().map(String::from))
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
+            && let Some(cls_array) = classifications.as_array()
+        {
+            for cls in cls_array {
+                if let Some(cls_obj) = cls.as_object()
+                    && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str())
+                {
+                    let labels = cls_obj
+                        .get("labels")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
 
-                            if !labels.is_empty() {
-                                let tokens = self.build_classification_tokens(task, &labels, cls_obj);
-                                schema_tokens_list.push(tokens);
-                                task_types.push("classifications".to_string());
-                                structure_labels.push(JsonValue::Array(Vec::new()));
-                            }
-                        }
+                    if !labels.is_empty() {
+                        let tokens = self.build_classification_tokens(task, &labels, cls_obj);
+                        schema_tokens_list.push(tokens);
+                        task_types.push("classifications".to_string());
+                        structure_labels.push(JsonValue::Array(Vec::new()));
+                    }
                 }
             }
+        }
 
         // Parse structures
         if let Some(structures) = schema.get("json_structures")
-            && let Some(struct_array) = structures.as_array() {
-                for structure in struct_array {
-                    if let Some(struct_obj) = structure.as_object() {
-                        for (parent, fields) in struct_obj {
-                            if let Some(fields_obj) = fields.as_object() {
-                                let field_names: Vec<String> = fields_obj.keys().cloned().collect();
-                                if !field_names.is_empty() {
-                                    let tokens = self.build_structure_tokens(parent, &field_names, fields_obj);
-                                    schema_tokens_list.push(tokens);
-                                    task_types.push("json_structures".to_string());
-                                    structure_labels.push(JsonValue::Array(Vec::new()));
-                                }
+            && let Some(struct_array) = structures.as_array()
+        {
+            for structure in struct_array {
+                if let Some(struct_obj) = structure.as_object() {
+                    for (parent, fields) in struct_obj {
+                        if let Some(fields_obj) = fields.as_object() {
+                            let field_names: Vec<String> = fields_obj.keys().cloned().collect();
+                            if !field_names.is_empty() {
+                                let tokens =
+                                    self.build_structure_tokens(parent, &field_names, fields_obj);
+                                schema_tokens_list.push(tokens);
+                                task_types.push("json_structures".to_string());
+                                structure_labels.push(JsonValue::Array(Vec::new()));
                             }
                         }
                     }
                 }
             }
+        }
 
         // Parse relations
         if let Some(relations) = schema.get("relations")
-            && let Some(rel_array) = relations.as_array() {
-                for relation in rel_array {
-                    if let Some(rel_obj) = relation.as_object() {
-                        for (rel_name, fields) in rel_obj {
-                            let field_names: Vec<String> = if let Some(fields_obj) = fields.as_object() {
-                                fields_obj.keys().cloned().collect()
-                            } else {
-                                vec!["head".to_string(), "tail".to_string()]
-                            };
+            && let Some(rel_array) = relations.as_array()
+        {
+            for relation in rel_array {
+                if let Some(rel_obj) = relation.as_object() {
+                    for (rel_name, fields) in rel_obj {
+                        let field_names: Vec<String> = if let Some(fields_obj) = fields.as_object()
+                        {
+                            fields_obj.keys().cloned().collect()
+                        } else {
+                            vec!["head".to_string(), "tail".to_string()]
+                        };
 
-                            let tokens = self.build_relation_tokens(rel_name, &field_names);
-                            schema_tokens_list.push(tokens);
-                            task_types.push("relations".to_string());
-                            structure_labels.push(JsonValue::Array(Vec::new()));
-                        }
+                        let tokens = self.build_relation_tokens(rel_name, &field_names);
+                        schema_tokens_list.push(tokens);
+                        task_types.push("relations".to_string());
+                        structure_labels.push(JsonValue::Array(Vec::new()));
                     }
                 }
             }
+        }
 
         Ok(SchemaEncodingResult {
             schema_tokens_list,
@@ -551,10 +575,11 @@ impl ExtractorCollator {
 
             // Add description if available
             if let Some(desc) = entities_value.get(name).and_then(|v| v.as_str())
-                && !desc.is_empty() {
-                    tokens.push(special_tokens::DESC_TOKEN.to_string());
-                    tokens.push(format!("{name}: {desc}"));
-                }
+                && !desc.is_empty()
+            {
+                tokens.push(special_tokens::DESC_TOKEN.to_string());
+                tokens.push(format!("{name}: {desc}"));
+            }
         }
 
         tokens.push(special_tokens::CLOSE_PAREN.to_string());
@@ -577,7 +602,10 @@ impl ExtractorCollator {
         ];
 
         // Add label descriptions if available
-        if let Some(label_descs) = cls_obj.get("label_descriptions").and_then(|v| v.as_object()) {
+        if let Some(label_descs) = cls_obj
+            .get("label_descriptions")
+            .and_then(|v| v.as_object())
+        {
             for label in labels {
                 tokens.push(special_tokens::L_TOKEN.to_string());
                 tokens.push(label.clone());
@@ -599,14 +627,14 @@ impl ExtractorCollator {
             for example in examples {
                 if let Some(ex_array) = example.as_array()
                     && ex_array.len() >= 2
-                        && let (Some(input), Some(output)) =
-                            (ex_array[0].as_str(), ex_array[1].as_str())
-                        {
-                            tokens.push(special_tokens::EXAMPLE_TOKEN.to_string());
-                            tokens.push(input.to_string());
-                            tokens.push(special_tokens::OUTPUT_TOKEN.to_string());
-                            tokens.push(output.to_string());
-                        }
+                    && let (Some(input), Some(output)) =
+                        (ex_array[0].as_str(), ex_array[1].as_str())
+                {
+                    tokens.push(special_tokens::EXAMPLE_TOKEN.to_string());
+                    tokens.push(input.to_string());
+                    tokens.push(special_tokens::OUTPUT_TOKEN.to_string());
+                    tokens.push(output.to_string());
+                }
             }
         }
 
@@ -635,10 +663,11 @@ impl ExtractorCollator {
 
             // Add description if available
             if let Some(field_obj) = fields_obj.get(field).and_then(|v| v.as_object())
-                && let Some(desc) = field_obj.get("description").and_then(|v| v.as_str()) {
-                    tokens.push(special_tokens::DESC_TOKEN.to_string());
-                    tokens.push(format!("{field}: {desc}"));
-                }
+                && let Some(desc) = field_obj.get("description").and_then(|v| v.as_str())
+            {
+                tokens.push(special_tokens::DESC_TOKEN.to_string());
+                tokens.push(format!("{field}: {desc}"));
+            }
         }
 
         tokens.push(special_tokens::CLOSE_PAREN.to_string());
@@ -672,14 +701,16 @@ impl ExtractorCollator {
     fn token_to_id(&self, token: &str) -> i64 {
         if let Some(hf_tok) = &self.hf_tokenizer
             && let Ok(encoding) = hf_tok.encode(token, false)
-                && let Some(&id) = encoding.get_ids().first() {
-                    return id as i64;
-                }
+            && let Some(&id) = encoding.get_ids().first()
+        {
+            return id as i64;
+        }
         // Fallback: hash-based placeholder
-        let hash = token.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+        let hash = token
+            .bytes()
+            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
         (hash % 30522) as i64
     }
-
 }
 
 /// Result of processing a single sample.
@@ -779,7 +810,8 @@ mod tests {
         let collator = ExtractorCollator::with_max_len(tokenizer, false, Some(5));
         let schema = create_test_schema();
 
-        let long_text = String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
+        let long_text =
+            String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
         let samples = vec![(long_text, schema)];
         let batch = collator.collate(&samples);
 
@@ -796,7 +828,8 @@ mod tests {
         let collator = base_collator.with_runtime_max_len(Some(3));
         let schema = create_test_schema();
 
-        let long_text = String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
+        let long_text =
+            String::from("Apple CEO Tim Cook announced iPhone 15 in Cupertino yesterday");
         let samples = vec![(long_text, schema)];
         let batch = collator.collate(&samples);
 
@@ -856,7 +889,8 @@ mod tests {
         let tokenizer = WhitespaceTokenizer::new();
         let collator = ExtractorCollator::new(tokenizer, false);
 
-        let tokens = collator.build_relation_tokens("works_for", &["head".to_string(), "tail".to_string()]);
+        let tokens =
+            collator.build_relation_tokens("works_for", &["head".to_string(), "tail".to_string()]);
 
         assert!(tokens.contains(&"(".to_string()));
         assert!(tokens.contains(&"[P]".to_string()));

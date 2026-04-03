@@ -29,7 +29,7 @@
 
 use std::path::Path;
 
-use candle_core::{Device, DType, Tensor};
+use candle_core::{DType, Device, Tensor};
 
 use crate::batch::PreprocessedBatch;
 use crate::config::ExtractorConfig;
@@ -70,8 +70,14 @@ impl std::fmt::Debug for ExtractorOutput {
             .field("batch_size", &self.batch_size)
             .field("token_embeddings_len", &self.token_embeddings.len())
             .field("schema_embeddings_len", &self.schema_embeddings.len())
-            .field("has_span_representations", &self.span_representations.is_some())
-            .field("has_classification_logits", &self.classification_logits.is_some())
+            .field(
+                "has_span_representations",
+                &self.span_representations.is_some(),
+            )
+            .field(
+                "has_classification_logits",
+                &self.classification_logits.is_some(),
+            )
             .field("has_count_predictions", &self.count_predictions.is_some())
             .field("device", &self.device)
             .finish()
@@ -193,9 +199,9 @@ impl Extractor {
             "cuda" => Device::cuda_if_available(0).unwrap_or(Device::Cpu),
             _ => {
                 if config.device.starts_with("cuda:") {
-                    let idx: usize = config.device[5..]
-                        .parse()
-                        .map_err(|_| GlinerError::config(format!("Invalid CUDA device: {}", config.device)))?;
+                    let idx: usize = config.device[5..].parse().map_err(|_| {
+                        GlinerError::config(format!("Invalid CUDA device: {}", config.device))
+                    })?;
                     Device::cuda_if_available(idx).unwrap_or(Device::Cpu)
                 } else {
                     Device::Cpu
@@ -204,14 +210,17 @@ impl Extractor {
         };
 
         // Initialize encoder
-        let encoder = CandleEncoder::new(config, device.clone())
-            .map_err(|e| GlinerError::model_loading(format!("Failed to initialize encoder: {e}")))?;
+        let encoder = CandleEncoder::new(config, device.clone()).map_err(|e| {
+            GlinerError::model_loading(format!("Failed to initialize encoder: {e}"))
+        })?;
 
         // Initialize submodules
         let span_rep = SpanRepresentationLayer::from_config(config, device.clone())?;
         let count_pred = CountPredictionLayer::from_config(config, device.clone())?;
-        let count_embed = CountEmbedLayer::new(config.hidden_size, 20, device.clone())
-            .map_err(|e| GlinerError::model_loading(format!("Failed to initialize count_embed: {e}")))?;
+        let count_embed =
+            CountEmbedLayer::new(config.hidden_size, 20, device.clone()).map_err(|e| {
+                GlinerError::model_loading(format!("Failed to initialize count_embed: {e}"))
+            })?;
         let classifier = ClassifierHead::from_config(config, device.clone())?;
 
         Ok(Self {
@@ -310,7 +319,8 @@ impl Extractor {
         let count_predictions = self.compute_count_predictions(&schema_embeddings)?;
 
         // Step 5: Compute classification logits for classification tasks
-        let classification_logits = self.compute_classification_logits(&schema_embeddings, batch)?;
+        let classification_logits =
+            self.compute_classification_logits(&schema_embeddings, batch)?;
 
         Ok(ExtractorOutput::new(
             token_embeddings,
@@ -345,9 +355,10 @@ impl Extractor {
         })?;
 
         // Run encoder forward pass
-        let encoder_output = self.encoder.forward(&input_ids, &attention_mask).map_err(|e| {
-            GlinerError::model_loading(format!("Encoder forward pass failed: {e}"))
-        })?;
+        let encoder_output = self
+            .encoder
+            .forward(&input_ids, &attention_mask)
+            .map_err(|e| GlinerError::model_loading(format!("Encoder forward pass failed: {e}")))?;
 
         // Extract per-sample embeddings using text_word_indices
         let batch_size = batch.batch_size();
@@ -358,7 +369,9 @@ impl Extractor {
             if word_count == 0 {
                 // Empty sample: return empty tensor
                 let empty = Tensor::zeros((0, self.hidden_size), DType::F32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty tensor: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to create empty tensor: {e}"))
+                    })?;
                 token_embeddings.push(empty);
                 continue;
             }
@@ -367,28 +380,45 @@ impl Extractor {
             if let Some(indices_tensor) = &batch.text_word_indices {
                 // indices_tensor shape: (batch_size, max_words)
                 // Gather indices for this sample
-                let sample_indices = indices_tensor.narrow(0, sample_idx, 1)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to narrow indices: {e}")))?
+                let sample_indices = indices_tensor
+                    .narrow(0, sample_idx, 1)
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to narrow indices: {e}"))
+                    })?
                     .squeeze(0)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze indices: {e}")))?
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to squeeze indices: {e}"))
+                    })?
                     .narrow(0, 0, word_count)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to trim padded indices: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to trim padded indices: {e}"))
+                    })?;
 
                 // encoder_output: (batch, seq_len, hidden)
                 // Gather: encoder_output[sample_idx, indices] -> (word_count, hidden)
-                let sample_encoder = encoder_output.narrow(0, sample_idx, 1)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to narrow encoder output: {e}")))?
+                let sample_encoder = encoder_output
+                    .narrow(0, sample_idx, 1)
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to narrow encoder output: {e}"))
+                    })?
                     .squeeze(0)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze encoder output: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to squeeze encoder output: {e}"))
+                    })?;
 
-                let word_embs = sample_encoder.index_select(&sample_indices, 0)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to gather word embeddings: {e}")))?;
+                let word_embs = sample_encoder
+                    .index_select(&sample_indices, 0)
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to gather word embeddings: {e}"))
+                    })?;
 
                 token_embeddings.push(word_embs);
             } else {
                 // Fallback: create empty tensor
                 let empty = Tensor::zeros((0, self.hidden_size), DType::F32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty tensor: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to create empty tensor: {e}"))
+                    })?;
                 token_embeddings.push(empty);
             }
         }
@@ -408,7 +438,10 @@ impl Extractor {
     /// # Returns
     ///
     /// A nested vector of schema embeddings: sample -> schema -> tokens -> embedding
-    fn extract_schema_embeddings(&self, batch: &PreprocessedBatch) -> Result<Vec<Vec<Vec<Tensor>>>> {
+    fn extract_schema_embeddings(
+        &self,
+        batch: &PreprocessedBatch,
+    ) -> Result<Vec<Vec<Vec<Tensor>>>> {
         // Get input_ids and attention_mask from batch
         let input_ids = batch.input_ids.to_device(&self.device).map_err(|e| {
             GlinerError::model_loading(format!("Failed to move input_ids to device: {e}"))
@@ -418,9 +451,10 @@ impl Extractor {
         })?;
 
         // Run encoder forward pass
-        let encoder_output = self.encoder.forward(&input_ids, &attention_mask).map_err(|e| {
-            GlinerError::model_loading(format!("Encoder forward pass failed: {e}"))
-        })?;
+        let encoder_output = self
+            .encoder
+            .forward(&input_ids, &attention_mask)
+            .map_err(|e| GlinerError::model_loading(format!("Encoder forward pass failed: {e}")))?;
 
         let batch_size = batch.batch_size();
         let mut schema_embeddings = Vec::with_capacity(batch_size);
@@ -436,29 +470,46 @@ impl Extractor {
                     sample_schema_embs.push(Vec::new());
                     continue;
                 }
-                let schema_tokens = schema_tokens.unwrap();
+                let Some(schema_tokens) = schema_tokens else {
+                    sample_schema_embs.push(Vec::new());
+                    continue;
+                };
 
                 // Get special indices for this schema
                 let special_indices = batch.schema_special_indices_for(sample_idx, schema_idx);
-                if special_indices.is_none() || special_indices.as_ref().is_none_or(|i| i.is_empty()) {
+                if special_indices.is_none()
+                    || special_indices.as_ref().is_none_or(|i| i.is_empty())
+                {
                     sample_schema_embs.push(Vec::new());
                     continue;
                 }
-                let special_indices = special_indices.unwrap();
+                let Some(special_indices) = special_indices else {
+                    sample_schema_embs.push(Vec::new());
+                    continue;
+                };
 
                 // Get encoder output for this sample
-                let sample_encoder = encoder_output.narrow(0, sample_idx, 1)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to narrow encoder output: {e}")))?
+                let sample_encoder = encoder_output
+                    .narrow(0, sample_idx, 1)
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to narrow encoder output: {e}"))
+                    })?
                     .squeeze(0)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to squeeze encoder output: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to squeeze encoder output: {e}"))
+                    })?;
 
                 // Extract embeddings for each schema token using special indices
                 let mut schema_token_embs = Vec::with_capacity(schema_tokens.len());
                 for &idx in special_indices.iter() {
-                    let idx_tensor = Tensor::new(&[idx as u32], &self.device)
-                        .map_err(|e| GlinerError::model_loading(format!("Failed to create index tensor: {e}")))?;
-                    let emb = sample_encoder.index_select(&idx_tensor, 0)
-                        .map_err(|e| GlinerError::model_loading(format!("Failed to gather schema embedding: {e}")))?;
+                    let idx_tensor = Tensor::new(&[idx as u32], &self.device).map_err(|e| {
+                        GlinerError::model_loading(format!("Failed to create index tensor: {e}"))
+                    })?;
+                    let emb = sample_encoder.index_select(&idx_tensor, 0).map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to gather schema embedding: {e}"
+                        ))
+                    })?;
 
                     schema_token_embs.push(emb);
                 }
@@ -493,9 +544,8 @@ impl Extractor {
         for (sample_idx, token_embs) in token_embeddings.iter().enumerate().take(batch_size) {
             // Check if this sample has span-based tasks
             let task_types = batch.sample_task_types(sample_idx);
-            let has_span_task = task_types.is_some_and(|types| {
-                types.iter().any(|t| t != "classifications")
-            });
+            let has_span_task =
+                task_types.is_some_and(|types| types.iter().any(|t| t != "classifications"));
 
             let numel = token_embs.dims().iter().product::<usize>();
 
@@ -504,13 +554,31 @@ impl Extractor {
                 span_outputs.push(span_output);
             } else {
                 // Create empty span output for samples without span tasks
-                let empty_span = Tensor::zeros((0, self.max_width, self.hidden_size), DType::F32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty span tensor: {e}")))?;
+                let empty_span = Tensor::zeros(
+                    (0, self.max_width, self.hidden_size),
+                    DType::F32,
+                    &self.device,
+                )
+                .map_err(|e| {
+                    GlinerError::model_loading(format!("Failed to create empty span tensor: {e}"))
+                })?;
                 let empty_idx = Tensor::zeros((0, self.max_width, 2), DType::U32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty index tensor: {e}")))?;
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to create empty index tensor: {e}"
+                        ))
+                    })?;
                 let empty_mask = Tensor::zeros((0, self.max_width), DType::U32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty mask tensor: {e}")))?;
-                span_outputs.push(SpanRepOutput { span_rep: empty_span, spans_idx: empty_idx, span_mask: empty_mask });
+                    .map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to create empty mask tensor: {e}"
+                        ))
+                    })?;
+                span_outputs.push(SpanRepOutput {
+                    span_rep: empty_span,
+                    spans_idx: empty_idx,
+                    span_mask: empty_mask,
+                });
             }
         }
 
@@ -573,11 +641,12 @@ impl Extractor {
         let batch_size = schema_embeddings.len();
         let mut all_logits = Vec::with_capacity(batch_size);
 
-        for (sample_idx, sample_schema_embs) in schema_embeddings.iter().enumerate().take(batch_size) {
+        for (sample_idx, sample_schema_embs) in
+            schema_embeddings.iter().enumerate().take(batch_size)
+        {
             let task_types = batch.sample_task_types(sample_idx);
-            let has_classification = task_types.is_some_and(|types| {
-                types.iter().any(|t| t == "classifications")
-            });
+            let has_classification =
+                task_types.is_some_and(|types| types.iter().any(|t| t == "classifications"));
 
             if has_classification {
                 // Collect schema embeddings for classification tasks
@@ -585,11 +654,16 @@ impl Extractor {
 
                 let task_types_ref = task_types.unwrap_or(&[]);
                 for (schema_idx, schema_token_embs) in sample_schema_embs.iter().enumerate() {
-                    if schema_idx < task_types_ref.len() && task_types_ref[schema_idx] == "classifications" {
+                    if schema_idx < task_types_ref.len()
+                        && task_types_ref[schema_idx] == "classifications"
+                    {
                         // Stack all schema token embeddings for this classification task
                         if !schema_token_embs.is_empty() {
-                            let stacked = Tensor::stack(schema_token_embs, 0)
-                                .map_err(|e| GlinerError::model_loading(format!("Failed to stack classification embeddings: {e}")))?;
+                            let stacked = Tensor::stack(schema_token_embs, 0).map_err(|e| {
+                                GlinerError::model_loading(format!(
+                                    "Failed to stack classification embeddings: {e}"
+                                ))
+                            })?;
                             cls_embs.push(stacked);
                         }
                     }
@@ -597,17 +671,26 @@ impl Extractor {
 
                 if !cls_embs.is_empty() {
                     // Stack all classification embeddings
-                    let all_cls_embs = Tensor::cat(&cls_embs, 0)
-                        .map_err(|e| GlinerError::model_loading(format!("Failed to concat classification embeddings: {e}")))?;
+                    let all_cls_embs = Tensor::cat(&cls_embs, 0).map_err(|e| {
+                        GlinerError::model_loading(format!(
+                            "Failed to concat classification embeddings: {e}"
+                        ))
+                    })?;
                     let logits = self.classifier.forward(&all_cls_embs)?;
                     all_logits.push(logits);
                 } else {
-                    all_logits.push(Tensor::zeros((0,), DType::F32, &self.device)
-                        .map_err(|e| GlinerError::model_loading(format!("Failed to create empty logits: {e}")))?);
+                    all_logits.push(Tensor::zeros((0,), DType::F32, &self.device).map_err(
+                        |e| {
+                            GlinerError::model_loading(format!(
+                                "Failed to create empty logits: {e}"
+                            ))
+                        },
+                    )?);
                 }
             } else {
-                all_logits.push(Tensor::zeros((0,), DType::F32, &self.device)
-                    .map_err(|e| GlinerError::model_loading(format!("Failed to create empty logits: {e}")))?);
+                all_logits.push(Tensor::zeros((0,), DType::F32, &self.device).map_err(|e| {
+                    GlinerError::model_loading(format!("Failed to create empty logits: {e}"))
+                })?);
             }
         }
 
@@ -625,9 +708,9 @@ impl Extractor {
     ///
     /// Encoder output tensor of shape `(batch_size, seq_len, hidden_size)`.
     pub fn run_encoder(&self, input_ids: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
-        self.encoder.forward(input_ids, attention_mask).map_err(|e| {
-            GlinerError::model_loading(format!("Encoder forward pass failed: {e}"))
-        })
+        self.encoder
+            .forward(input_ids, attention_mask)
+            .map_err(|e| GlinerError::model_loading(format!("Encoder forward pass failed: {e}")))
     }
 
     /// Extract embeddings from a batch using the fast path (gather-based).
@@ -712,12 +795,10 @@ impl Extractor {
 }
 
 /// Builder for constructing `Extractor` with custom settings.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExtractorBuilder {
     config: ExtractorConfig,
 }
-
 
 impl ExtractorBuilder {
     /// Create a new builder with default settings.
@@ -787,17 +868,26 @@ mod tests {
 
     fn create_test_batch() -> PreprocessedBatch {
         let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4, 5, 6], (2, 3), &Device::Cpu).unwrap();
-        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &Device::Cpu).unwrap();
+        let attention_mask =
+            Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &Device::Cpu).unwrap();
 
         PreprocessedBatchBuilder::new()
             .input_ids(input_ids)
             .attention_mask(attention_mask)
             .schema_counts(vec![1, 1])
-            .task_types(vec![vec!["entities".to_string()], vec!["entities".to_string()]])
-            .text_tokens(vec![vec!["apple".to_string(), "inc".to_string()], vec!["hello".to_string()]])
-            .schema_tokens_list(vec![
-                vec![vec!["(".to_string(), "[P]".to_string(), "entities".to_string()]]],
-            )
+            .task_types(vec![
+                vec!["entities".to_string()],
+                vec!["entities".to_string()],
+            ])
+            .text_tokens(vec![
+                vec!["apple".to_string(), "inc".to_string()],
+                vec!["hello".to_string()],
+            ])
+            .schema_tokens_list(vec![vec![vec![
+                "(".to_string(),
+                "[P]".to_string(),
+                "entities".to_string(),
+            ]]])
             .start_mappings(vec![vec![0, 6], vec![0]])
             .end_mappings(vec![vec![5, 10], vec![5]])
             .original_texts(vec!["Apple Inc.".to_string(), "Hello".to_string()])
@@ -905,7 +995,8 @@ mod tests {
         let extractor = Extractor::new(&config).unwrap();
 
         let input_ids = Tensor::from_slice(&[1u32, 2, 3, 4, 5, 6], (2, 3), &Device::Cpu).unwrap();
-        let attention_mask = Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &Device::Cpu).unwrap();
+        let attention_mask =
+            Tensor::from_slice(&[1u32, 1, 1, 1, 1, 0], (2, 3), &Device::Cpu).unwrap();
 
         let output = extractor.run_encoder(&input_ids, &attention_mask);
         assert!(output.is_ok());

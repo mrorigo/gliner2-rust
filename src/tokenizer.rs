@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// 3. Mentions (@username)
 /// 4. Words with optional hyphens/underscores
 /// 5. Any non-whitespace character
-static TOKEN_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+static TOKEN_PATTERN: LazyLock<std::result::Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new(
         r"(?x)
         (?:https?://[^\s]+|www\.[^\s]+)
@@ -25,7 +25,6 @@ static TOKEN_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         |\w+(?:[-_]\w+)*
         |\S",
     )
-    .expect("Failed to compile token pattern")
 });
 
 /// A single token with its text and character position in the original text.
@@ -95,6 +94,38 @@ impl Default for WhitespaceTokenizer {
 }
 
 impl WhitespaceTokenizer {
+    fn tokenize_with_regex(pattern: &Regex, text: &str) -> Vec<Token> {
+        pattern
+            .find_iter(text)
+            .map(|m| Token {
+                text: m.as_str().to_string(),
+                start: m.start(),
+                end: m.end(),
+            })
+            .collect()
+    }
+
+    fn tokenize_fallback(text: &str) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut current_start: Option<usize> = None;
+
+        for (idx, ch) in text.char_indices() {
+            if ch.is_whitespace() {
+                if let Some(start) = current_start.take() {
+                    tokens.push(Token::new(&text[start..idx], start, idx));
+                }
+            } else if current_start.is_none() {
+                current_start = Some(idx);
+            }
+        }
+
+        if let Some(start) = current_start {
+            tokens.push(Token::new(&text[start..], start, text.len()));
+        }
+
+        tokens
+    }
+
     /// Create a new tokenizer with default settings (lowercase enabled).
     pub fn new() -> Self {
         Self { lowercase: true }
@@ -134,14 +165,16 @@ impl WhitespaceTokenizer {
             text.to_string()
         };
 
-        TOKEN_PATTERN
-            .find_iter(&text)
-            .map(|m| Token {
-                text: m.as_str().to_string(),
-                start: m.start(),
-                end: m.end(),
-            })
-            .collect()
+        match TOKEN_PATTERN.as_ref() {
+            Ok(pattern) => Self::tokenize_with_regex(pattern, &text),
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    "Failed to initialize tokenizer regex; using fallback splitter"
+                );
+                Self::tokenize_fallback(&text)
+            }
+        }
     }
 
     /// Tokenize text and return token texts only (without positions).
@@ -154,10 +187,7 @@ impl WhitespaceTokenizer {
     ///
     /// A vector of token strings.
     pub fn tokenize_text(&self, text: &str) -> Vec<String> {
-        self.tokenize(text)
-            .into_iter()
-            .map(|t| t.text)
-            .collect()
+        self.tokenize(text).into_iter().map(|t| t.text).collect()
     }
 
     /// Build start and end mappings from tokens to character positions.
@@ -189,10 +219,7 @@ impl WhitespaceTokenizer {
     /// # Returns
     ///
     /// A tuple of (tokens, start_mapping, end_mapping).
-    pub fn tokenize_with_mappings(
-        &self,
-        text: &str,
-    ) -> (Vec<Token>, Vec<usize>, Vec<usize>) {
+    pub fn tokenize_with_mappings(&self, text: &str) -> (Vec<Token>, Vec<usize>, Vec<usize>) {
         let tokens = self.tokenize(text);
         let (start_mapping, end_mapping) = Self::build_mappings(&tokens);
         (tokens, start_mapping, end_mapping)

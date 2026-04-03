@@ -7,7 +7,8 @@ use gliner2_rust::{ExtractorConfig, GLiNER2};
 use serde_json::Value as JsonValue;
 
 fn find_snapshot_dir() -> PathBuf {
-    let root = Path::new("/Users/origo/.cache/huggingface/hub/models--fastino--gliner2-base-v1/snapshots");
+    let root =
+        Path::new("/Users/origo/.cache/huggingface/hub/models--fastino--gliner2-base-v1/snapshots");
     let mut candidates = Vec::new();
     for entry in fs::read_dir(root).expect("Failed to read snapshots dir") {
         let entry = entry.expect("Failed to read snapshot entry");
@@ -44,7 +45,11 @@ fn split_structure_chunks(s: &str) -> Vec<String> {
 
 fn normalize_entities(result: &JsonValue) -> JsonValue {
     let mut out = serde_json::Map::new();
-    let entities = result.get("entities").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let entities = result
+        .get("entities")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
     for (k, vals) in entities {
         let mut texts = Vec::<String>::new();
         if let Some(arr) = vals.as_array() {
@@ -58,14 +63,21 @@ fn normalize_entities(result: &JsonValue) -> JsonValue {
         }
         texts.sort();
         texts.dedup();
-        out.insert(k, JsonValue::Array(texts.into_iter().map(JsonValue::String).collect()));
+        out.insert(
+            k,
+            JsonValue::Array(texts.into_iter().map(JsonValue::String).collect()),
+        );
     }
     JsonValue::Object(out)
 }
 
 fn normalize_relations(result: &JsonValue) -> JsonValue {
     let mut out = serde_json::Map::new();
-    let rels = result.get("relation_extraction").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let rels = result
+        .get("relation_extraction")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
     for (name, vals) in rels {
         let mut pairs = Vec::<String>::new();
         if let Some(arr) = vals.as_array() {
@@ -79,7 +91,9 @@ fn normalize_relations(result: &JsonValue) -> JsonValue {
                     if let Some(t) = tail.and_then(|v| v.get("text")) {
                         tail = Some(t);
                     }
-                    if let (Some(hs), Some(ts)) = (head.and_then(|v| v.as_str()), tail.and_then(|v| v.as_str())) {
+                    if let (Some(hs), Some(ts)) =
+                        (head.and_then(|v| v.as_str()), tail.and_then(|v| v.as_str()))
+                    {
                         pairs.push(format!("{}|||{}", norm_text(hs), norm_text(ts)));
                     }
                 } else if let Some(arr2) = item.as_array() {
@@ -93,7 +107,10 @@ fn normalize_relations(result: &JsonValue) -> JsonValue {
         }
         pairs.sort();
         pairs.dedup();
-        out.insert(name, JsonValue::Array(pairs.into_iter().map(JsonValue::String).collect()));
+        out.insert(
+            name,
+            JsonValue::Array(pairs.into_iter().map(JsonValue::String).collect()),
+        );
     }
     JsonValue::Object(out)
 }
@@ -182,8 +199,12 @@ fn test_python_reference_parity_fixtures() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let start = stdout.find("__PARITY_JSON_START__").expect("missing start marker");
-    let end = stdout.find("__PARITY_JSON_END__").expect("missing end marker");
+    let start = stdout
+        .find("__PARITY_JSON_START__")
+        .expect("missing start marker");
+    let end = stdout
+        .find("__PARITY_JSON_END__")
+        .expect("missing end marker");
     let json_text = stdout[start + "__PARITY_JSON_START__".len()..end].trim();
     let py_norm: JsonValue = serde_json::from_str(json_text).expect("invalid python json");
 
@@ -201,7 +222,9 @@ fn test_python_reference_parity_fixtures() {
         .expect("failed to build config");
 
     let mut engine = GLiNER2::new(&config).expect("failed to init rust engine");
-    engine.load_weights(&model_path).expect("failed to load rust weights");
+    engine
+        .load_weights(&model_path)
+        .expect("failed to load rust weights");
 
     let fixtures = vec![
         (
@@ -451,13 +474,19 @@ fn test_python_reference_parity_fixtures() {
         }));
     }
 
-    rust_fixtures.sort_by_key(|v| v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string());
+    rust_fixtures.sort_by_key(|v| {
+        v.get("id")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    });
     let rust_norm = serde_json::json!({
         "fixtures": rust_fixtures
     });
 
     assert_eq!(
-        rust_norm, py_norm,
+        rust_norm,
+        py_norm,
         "Rust/Python parity mismatch\nrust={}\npython={}",
         serde_json::to_string_pretty(&rust_norm).unwrap_or_default(),
         serde_json::to_string_pretty(&py_norm).unwrap_or_default()

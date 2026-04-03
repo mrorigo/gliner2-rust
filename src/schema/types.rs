@@ -21,7 +21,6 @@ pub enum FieldDtype {
     List,
 }
 
-
 impl std::fmt::Display for FieldDtype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -108,12 +107,16 @@ impl RegexValidator {
 
     /// Validate text against the pattern.
     pub fn validate(&self, text: &str) -> Result<bool> {
-        let re = regex::Regex::new(&self.pattern).map_err(|e| {
-            GlinerError::regex_validator(format!("Invalid regex: {}", e))
-        })?;
+        let re = regex::Regex::new(&self.pattern)
+            .map_err(|e| GlinerError::regex_validator(format!("Invalid regex: {}", e)))?;
 
         let matched = match self.mode {
-            MatchMode::Full => re.is_match(text) && re.find(text).is_some_and(|m| m.start() == 0 && m.end() == text.len()),
+            MatchMode::Full => {
+                re.is_match(text)
+                    && re
+                        .find(text)
+                        .is_some_and(|m| m.start() == 0 && m.end() == text.len())
+            }
             MatchMode::Partial => re.is_match(text),
         };
 
@@ -407,9 +410,7 @@ impl std::str::FromStr for TaskType {
             "classifications" => Ok(TaskType::Classifications),
             "json_structures" => Ok(TaskType::JsonStructures),
             "relations" => Ok(TaskType::Relations),
-            _ => Err(GlinerError::validation(format!(
-                "Invalid task type: {s}"
-            ))),
+            _ => Err(GlinerError::validation(format!("Invalid task type: {s}"))),
         }
     }
 }
@@ -507,16 +508,15 @@ impl Schema {
         // Validate entities
         for entity in &self.entities {
             if entity.name.is_empty() {
-                return Err(GlinerError::invalid_schema(
-                    "Entity name cannot be empty",
-                ));
+                return Err(GlinerError::invalid_schema("Entity name cannot be empty"));
             }
             if let Some(threshold) = entity.threshold
-                && !(0.0..=1.0).contains(&threshold) {
-                    return Err(GlinerError::invalid_schema(format!(
-                        "Entity threshold must be 0-1, got {threshold}"
-                    )));
-                }
+                && !(0.0..=1.0).contains(&threshold)
+            {
+                return Err(GlinerError::invalid_schema(format!(
+                    "Entity threshold must be 0-1, got {threshold}"
+                )));
+            }
         }
 
         // Validate classifications
@@ -555,32 +555,30 @@ impl Schema {
             }
             for field in &structure.fields {
                 if field.name.is_empty() {
-                    return Err(GlinerError::invalid_schema(
-                        "Field name cannot be empty",
-                    ));
+                    return Err(GlinerError::invalid_schema("Field name cannot be empty"));
                 }
                 if let Some(threshold) = field.threshold
-                    && !(0.0..=1.0).contains(&threshold) {
-                        return Err(GlinerError::invalid_schema(format!(
-                            "Field threshold must be 0-1, got {threshold}"
-                        )));
-                    }
+                    && !(0.0..=1.0).contains(&threshold)
+                {
+                    return Err(GlinerError::invalid_schema(format!(
+                        "Field threshold must be 0-1, got {threshold}"
+                    )));
+                }
             }
         }
 
         // Validate relations
         for relation in &self.relations {
             if relation.name.is_empty() {
-                return Err(GlinerError::invalid_schema(
-                    "Relation name cannot be empty",
-                ));
+                return Err(GlinerError::invalid_schema("Relation name cannot be empty"));
             }
             if let Some(threshold) = relation.threshold
-                && !(0.0..=1.0).contains(&threshold) {
-                    return Err(GlinerError::invalid_schema(format!(
-                        "Relation threshold must be 0-1, got {threshold}"
-                    )));
-                }
+                && !(0.0..=1.0).contains(&threshold)
+            {
+                return Err(GlinerError::invalid_schema(format!(
+                    "Relation threshold must be 0-1, got {threshold}"
+                )));
+            }
         }
 
         Ok(())
@@ -597,7 +595,10 @@ impl Schema {
                 .iter()
                 .map(|e| serde_json::Value::String(e.name.clone()))
                 .collect();
-            dict.insert("entities".to_string(), serde_json::Value::Array(entity_names));
+            dict.insert(
+                "entities".to_string(),
+                serde_json::Value::Array(entity_names),
+            );
 
             if !self.entity_descriptions.is_empty() {
                 let descs: serde_json::Map<String, serde_json::Value> = self
@@ -619,7 +620,10 @@ impl Schema {
                 .iter()
                 .map(|cls| {
                     let mut obj = serde_json::Map::new();
-                    obj.insert("task".to_string(), serde_json::Value::String(cls.task.clone()));
+                    obj.insert(
+                        "task".to_string(),
+                        serde_json::Value::String(cls.task.clone()),
+                    );
                     obj.insert(
                         "labels".to_string(),
                         serde_json::Value::Array(
@@ -630,15 +634,19 @@ impl Schema {
                         ),
                     );
                     if cls.multi_label {
+                        obj.insert("multi_label".to_string(), serde_json::Value::Bool(true));
+                    }
+                    let threshold = if cls.cls_threshold.is_finite() {
+                        cls.cls_threshold.clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                    if let Some(number) = serde_json::Number::from_f64(threshold as f64) {
                         obj.insert(
-                            "multi_label".to_string(),
-                            serde_json::Value::Bool(true),
+                            "cls_threshold".to_string(),
+                            serde_json::Value::Number(number),
                         );
                     }
-                    obj.insert(
-                        "cls_threshold".to_string(),
-                        serde_json::Value::Number(serde_json::Number::from_f64(cls.cls_threshold as f64).unwrap()),
-                    );
                     serde_json::Value::Object(obj)
                 })
                 .collect();
@@ -665,8 +673,14 @@ impl Schema {
 
                         if has_metadata {
                             let mut field_obj = serde_json::Map::new();
-                            field_obj.insert("value".to_string(), serde_json::Value::String("".to_string()));
-                            field_obj.insert("dtype".to_string(), serde_json::Value::String(field.dtype.to_string()));
+                            field_obj.insert(
+                                "value".to_string(),
+                                serde_json::Value::String("".to_string()),
+                            );
+                            field_obj.insert(
+                                "dtype".to_string(),
+                                serde_json::Value::String(field.dtype.to_string()),
+                            );
 
                             if let Some(choices) = &field.choices {
                                 field_obj.insert(
@@ -680,20 +694,29 @@ impl Schema {
                                 );
                             }
                             if let Some(description) = &field.description {
-                                field_obj.insert("description".to_string(), serde_json::Value::String(description.clone()));
+                                field_obj.insert(
+                                    "description".to_string(),
+                                    serde_json::Value::String(description.clone()),
+                                );
                             }
                             if let Some(threshold) = field.threshold
-                                && let Some(n) = serde_json::Number::from_f64(threshold as f64) {
-                                    field_obj.insert("threshold".to_string(), serde_json::Value::Number(n));
-                                }
+                                && let Some(n) = serde_json::Number::from_f64(threshold as f64)
+                            {
+                                field_obj
+                                    .insert("threshold".to_string(), serde_json::Value::Number(n));
+                            }
                             if let Some(validators) = &field.validators {
-                                let vals = serde_json::to_value(validators).unwrap_or(serde_json::Value::Array(vec![]));
+                                let vals = serde_json::to_value(validators)
+                                    .unwrap_or(serde_json::Value::Array(vec![]));
                                 field_obj.insert("validators".to_string(), vals);
                             }
 
                             fields.insert(field.name.clone(), serde_json::Value::Object(field_obj));
                         } else {
-                            fields.insert(field.name.clone(), serde_json::Value::String("".to_string()));
+                            fields.insert(
+                                field.name.clone(),
+                                serde_json::Value::String("".to_string()),
+                            );
                         }
                     }
                     obj.insert(s.name.clone(), serde_json::Value::Object(fields));
@@ -744,10 +767,7 @@ impl Schema {
                     serde_json::Value::Object(obj)
                 })
                 .collect();
-            dict.insert(
-                "relations".to_string(),
-                serde_json::Value::Array(relations),
-            );
+            dict.insert("relations".to_string(), serde_json::Value::Array(relations));
 
             let relation_meta: serde_json::Map<String, serde_json::Value> = self
                 .relations
@@ -763,7 +783,10 @@ impl Schema {
                 })
                 .collect();
             if !relation_meta.is_empty() {
-                dict.insert("relation_metadata".to_string(), serde_json::Value::Object(relation_meta));
+                dict.insert(
+                    "relation_metadata".to_string(),
+                    serde_json::Value::Object(relation_meta),
+                );
             }
         }
 
@@ -781,9 +804,10 @@ impl Schema {
                     for (name, value) in entities_obj {
                         let mut entity = EntityDef::new(name);
                         if let Some(desc) = value.as_str()
-                            && !desc.is_empty() {
-                                entity = entity.with_description(desc);
-                            }
+                            && !desc.is_empty()
+                        {
+                            entity = entity.with_description(desc);
+                        }
                         schema.entities.push(entity);
                     }
                 } else if let Some(entities_arr) = entities.as_array() {
@@ -797,86 +821,99 @@ impl Schema {
 
             // Parse entity descriptions
             if let Some(descs) = obj.get("entity_descriptions")
-                && let Some(descs_obj) = descs.as_object() {
-                    for (k, v) in descs_obj {
-                        if let Some(desc) = v.as_str() {
-                            schema.entity_descriptions.insert(k.clone(), desc.to_string());
-                        }
+                && let Some(descs_obj) = descs.as_object()
+            {
+                for (k, v) in descs_obj {
+                    if let Some(desc) = v.as_str() {
+                        schema
+                            .entity_descriptions
+                            .insert(k.clone(), desc.to_string());
                     }
                 }
+            }
 
             // Parse classifications
             if let Some(classifications) = obj.get("classifications")
-                && let Some(cls_arr) = classifications.as_array() {
-                    for cls_value in cls_arr {
-                        if let Some(cls_obj) = cls_value.as_object()
-                            && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str()) {
-                                let labels = cls_obj
-                                    .get("labels")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
+                && let Some(cls_arr) = classifications.as_array()
+            {
+                for cls_value in cls_arr {
+                    if let Some(cls_obj) = cls_value.as_object()
+                        && let Some(task) = cls_obj.get("task").and_then(|v| v.as_str())
+                    {
+                        let labels = cls_obj
+                            .get("labels")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
 
-                                let mut cls = ClassificationDef::new(task, labels);
+                        let mut cls = ClassificationDef::new(task, labels);
 
-                                if let Some(multi) = cls_obj.get("multi_label").and_then(|v| v.as_bool()) {
-                                    cls = cls.multi_label(multi);
-                                }
-                                if let Some(threshold) = cls_obj.get("cls_threshold").and_then(|v| v.as_f64()) {
-                                    cls = cls.with_threshold(threshold as f32);
-                                }
+                        if let Some(multi) = cls_obj.get("multi_label").and_then(|v| v.as_bool()) {
+                            cls = cls.multi_label(multi);
+                        }
+                        if let Some(threshold) =
+                            cls_obj.get("cls_threshold").and_then(|v| v.as_f64())
+                        {
+                            cls = cls.with_threshold(threshold as f32);
+                        }
 
-                                schema.classifications.push(cls);
-                            }
+                        schema.classifications.push(cls);
                     }
                 }
+            }
 
             // Parse structures
             if let Some(structures) = obj.get("json_structures")
-                && let Some(struct_arr) = structures.as_array() {
-                    for struct_value in struct_arr {
-                        if let Some(struct_obj) = struct_value.as_object() {
-                            for (name, fields_value) in struct_obj {
-                                let mut structure = StructureDef::new(name);
-                                if let Some(fields_obj) = fields_value.as_object() {
-                                    for (field_name, field_value) in fields_obj {
-                                        let mut field = FieldDef::new(field_name);
-                                        if let Some(field_obj) = field_value.as_object()
-                                            && let Some(choices) = field_obj.get("choices").and_then(|v| v.as_array()) {
-                                                let choice_strings: Vec<String> = choices
-                                                    .iter()
-                                                    .filter_map(|v| v.as_str().map(String::from))
-                                                    .collect();
-                                                field = field.with_choices(choice_strings);
-                                            }
-                                        structure.fields.push(field);
+                && let Some(struct_arr) = structures.as_array()
+            {
+                for struct_value in struct_arr {
+                    if let Some(struct_obj) = struct_value.as_object() {
+                        for (name, fields_value) in struct_obj {
+                            let mut structure = StructureDef::new(name);
+                            if let Some(fields_obj) = fields_value.as_object() {
+                                for (field_name, field_value) in fields_obj {
+                                    let mut field = FieldDef::new(field_name);
+                                    if let Some(field_obj) = field_value.as_object()
+                                        && let Some(choices) =
+                                            field_obj.get("choices").and_then(|v| v.as_array())
+                                    {
+                                        let choice_strings: Vec<String> = choices
+                                            .iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect();
+                                        field = field.with_choices(choice_strings);
                                     }
+                                    structure.fields.push(field);
                                 }
-                                schema.structures.push(structure);
                             }
+                            schema.structures.push(structure);
                         }
                     }
                 }
+            }
 
             // Parse structure descriptions
             if let Some(descs) = obj.get("json_descriptions")
-                && let Some(descs_obj) = descs.as_object() {
-                    for (struct_name, fields_descs) in descs_obj {
-                        if let Some(fields_obj) = fields_descs.as_object() {
-                            let mut inner_map = HashMap::new();
-                            for (field_name, desc) in fields_obj {
-                                if let Some(desc_str) = desc.as_str() {
-                                    inner_map.insert(field_name.clone(), desc_str.to_string());
-                                }
+                && let Some(descs_obj) = descs.as_object()
+            {
+                for (struct_name, fields_descs) in descs_obj {
+                    if let Some(fields_obj) = fields_descs.as_object() {
+                        let mut inner_map = HashMap::new();
+                        for (field_name, desc) in fields_obj {
+                            if let Some(desc_str) = desc.as_str() {
+                                inner_map.insert(field_name.clone(), desc_str.to_string());
                             }
-                            schema.json_descriptions.insert(struct_name.clone(), inner_map);
                         }
+                        schema
+                            .json_descriptions
+                            .insert(struct_name.clone(), inner_map);
                     }
                 }
+            }
 
             // Parse relations
             if let Some(relations) = obj.get("relations") {
@@ -920,9 +957,12 @@ mod tests {
 
     #[test]
     fn test_classification_def() {
-        let cls = ClassificationDef::new("sentiment", vec!["positive".to_string(), "negative".to_string()])
-            .multi_label(true)
-            .with_threshold(0.4);
+        let cls = ClassificationDef::new(
+            "sentiment",
+            vec!["positive".to_string(), "negative".to_string()],
+        )
+        .multi_label(true)
+        .with_threshold(0.4);
 
         assert_eq!(cls.task, "sentiment");
         assert!(cls.multi_label);
@@ -945,8 +985,7 @@ mod tests {
         let schema = Schema::new();
         assert!(schema.validate().is_err());
 
-        let schema = Schema::new()
-            .entities(vec![EntityDef::new("person")]);
+        let schema = Schema::new().entities(vec![EntityDef::new("person")]);
         assert!(schema.validate().is_ok());
     }
 
@@ -957,9 +996,10 @@ mod tests {
                 EntityDef::new("person").with_description("Names of people"),
                 EntityDef::new("company"),
             ])
-            .classifications(vec![
-                ClassificationDef::new("sentiment", vec!["positive".to_string(), "negative".to_string()]),
-            ]);
+            .classifications(vec![ClassificationDef::new(
+                "sentiment",
+                vec!["positive".to_string(), "negative".to_string()],
+            )]);
 
         let dict = schema.to_dict();
         assert!(dict.get("entities").is_some());
@@ -999,7 +1039,10 @@ mod tests {
     #[test]
     fn test_task_type_from_str() {
         assert_eq!("entities".parse::<TaskType>().unwrap(), TaskType::Entities);
-        assert_eq!("classifications".parse::<TaskType>().unwrap(), TaskType::Classifications);
+        assert_eq!(
+            "classifications".parse::<TaskType>().unwrap(),
+            TaskType::Classifications
+        );
         assert!("invalid".parse::<TaskType>().is_err());
     }
 

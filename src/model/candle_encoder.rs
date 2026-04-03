@@ -72,27 +72,34 @@ impl EncoderType {
     pub fn from_safetensors_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
         use std::io::Read;
         let path = path.as_ref();
-        let mut file = std::fs::File::open(path)
-            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to open safetensors: {e}"), path))?;
+        let mut file = std::fs::File::open(path).map_err(|e| {
+            GlinerError::model_loading_with_path(format!("Failed to open safetensors: {e}"), path)
+        })?;
 
         // Read header length (first 8 bytes)
         let mut len_bytes = [0u8; 8];
-        file.read_exact(&mut len_bytes)
-            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path))?;
+        file.read_exact(&mut len_bytes).map_err(|e| {
+            GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path)
+        })?;
         let header_len = u64::from_le_bytes(len_bytes) as usize;
 
         // Read header JSON
         let mut header_bytes = vec![0u8; header_len];
-        file.read_exact(&mut header_bytes)
-            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path))?;
+        file.read_exact(&mut header_bytes).map_err(|e| {
+            GlinerError::model_loading_with_path(format!("Failed to read header: {e}"), path)
+        })?;
 
-        let header: std::collections::HashMap<String, serde_json::Value> = serde_json::from_slice(&header_bytes)
-            .map_err(|e| GlinerError::model_loading_with_path(format!("Failed to parse header: {e}"), path))?;
+        let header: std::collections::HashMap<String, serde_json::Value> =
+            serde_json::from_slice(&header_bytes).map_err(|e| {
+                GlinerError::model_loading_with_path(format!("Failed to parse header: {e}"), path)
+            })?;
 
         // Check for DeBERTa-specific weight patterns
         let has_rel_embeddings = header.keys().any(|name| name.contains("rel_embeddings"));
         let has_key_proj = header.keys().any(|name| name.contains("key_proj"));
-        let has_token_type = header.keys().any(|name| name.contains("token_type_embeddings"));
+        let has_token_type = header
+            .keys()
+            .any(|name| name.contains("token_type_embeddings"));
 
         // DeBERTa V3 has rel_embeddings but no token_type_embeddings
         if has_rel_embeddings && !has_token_type {
@@ -181,7 +188,8 @@ impl CandleEncoder {
         // DeBERTa V3 has rel_embeddings but no token_type_embeddings
         let has_rel = vb.contains_tensor("encoder.encoder.rel_embeddings.weight");
         let has_token_type = vb.contains_tensor("encoder.embeddings.token_type_embeddings.weight");
-        let has_key_proj = vb.contains_tensor("encoder.encoder.layer.0.attention.self.key_proj.weight");
+        let has_key_proj =
+            vb.contains_tensor("encoder.encoder.layer.0.attention.self.key_proj.weight");
 
         let encoder_type = if has_rel && !has_token_type {
             EncoderType::DebertaV3
@@ -223,16 +231,17 @@ impl CandleEncoder {
         let encoder_type = EncoderType::from_safetensors_path(path)?;
         let hidden_size = config.hidden_size;
 
-        // Load weights from safetensors
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &device)
-        }
-        .map_err(|e| {
-            GlinerError::model_loading_with_path(
-                format!("Failed to load safetensors: {e}"),
-                path,
-            )
-        })?;
+        // Load weights from safetensors.
+        // SAFETY: `path` is provided by the caller and read-only memory mapped.
+        // candle validates safetensors headers and tensor offsets before
+        // constructing tensors, returning an error on malformed files.
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &device) }
+            .map_err(|e| {
+                GlinerError::model_loading_with_path(
+                    format!("Failed to load safetensors: {e}"),
+                    path,
+                )
+            })?;
 
         let model = Self::load_model(vb, config, encoder_type)?;
 
@@ -257,8 +266,12 @@ impl CandleEncoder {
         // So we add the "encoder" prefix to the VarBuilder to match the stored names.
         let vb = vb.pp("encoder");
 
-        tracing::info!("Loading {:?} encoder with vocab_size={}, hidden_size={}",
-            encoder_type, config.vocab_size, config.hidden_size);
+        tracing::info!(
+            "Loading {:?} encoder with vocab_size={}, hidden_size={}",
+            encoder_type,
+            config.vocab_size,
+            config.hidden_size
+        );
 
         match encoder_type {
             EncoderType::Bert => {
@@ -270,22 +283,18 @@ impl CandleEncoder {
             }
             EncoderType::DebertaV2 => {
                 let deberta_config = Self::build_deberta_config(config);
-                let model =
-                    debertav2::DebertaV2Model::load(vb, &deberta_config).map_err(|e| {
-                        GlinerError::model_loading(format!(
-                            "Failed to load DeBERTa V2 model: {e}"
-                        ))
-                    })?;
+                let model = debertav2::DebertaV2Model::load(vb, &deberta_config).map_err(|e| {
+                    GlinerError::model_loading(format!("Failed to load DeBERTa V2 model: {e}"))
+                })?;
                 Ok(EncoderModel::DebertaV2(Box::new(model)))
             }
             EncoderType::DebertaV3 => {
                 let deberta_config = Self::build_deberta_v3_config(config);
-                let model =
-                    debertav2::DebertaV2Model::load(vb, &deberta_config).map_err(|e| {
-                        GlinerError::model_loading(format!(
-                            "Failed to load DeBERTa V3-compatible DeBERTa V2 model: {e}"
-                        ))
-                    })?;
+                let model = debertav2::DebertaV2Model::load(vb, &deberta_config).map_err(|e| {
+                    GlinerError::model_loading(format!(
+                        "Failed to load DeBERTa V3-compatible DeBERTa V2 model: {e}"
+                    ))
+                })?;
                 Ok(EncoderModel::DebertaV2(Box::new(model)))
             }
         }
@@ -309,9 +318,7 @@ impl CandleEncoder {
         match &self.model {
             EncoderModel::Bert(model) => model
                 .forward(input_ids, &token_type_ids, Some(attention_mask))
-                .map_err(|e| {
-                    GlinerError::model_loading(format!("BERT forward pass failed: {e}"))
-                }),
+                .map_err(|e| GlinerError::model_loading(format!("BERT forward pass failed: {e}"))),
             EncoderModel::DebertaV2(model) => model
                 .forward(input_ids, None, Some(attention_mask.clone()))
                 .map_err(|e| {
@@ -347,15 +354,16 @@ impl CandleEncoder {
     pub fn load_weights(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &self.device)
-        }
-        .map_err(|e| {
-            GlinerError::model_loading_with_path(
-                format!("Failed to load safetensors: {e}"),
-                path,
-            )
-        })?;
+        // SAFETY: `path` points to the requested safetensors file and is only
+        // mapped for immutable reads. candle performs format and bounds checks
+        // and surfaces failures as `Result` errors.
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &self.device) }
+            .map_err(|e| {
+                GlinerError::model_loading_with_path(
+                    format!("Failed to load safetensors: {e}"),
+                    path,
+                )
+            })?;
 
         let encoder_type = match &self.model {
             EncoderModel::Bert(_) => EncoderType::Bert,
@@ -484,13 +492,13 @@ impl CandleEncoder {
     fn map_deberta_act(act: crate::config::HiddenActivation) -> debertav2::HiddenAct {
         match act {
             crate::config::HiddenActivation::Gelu => debertav2::HiddenAct::Gelu,
-            crate::config::HiddenActivation::GeluApproximate => debertav2::HiddenAct::GeluApproximate,
+            crate::config::HiddenActivation::GeluApproximate => {
+                debertav2::HiddenAct::GeluApproximate
+            }
             crate::config::HiddenActivation::Relu => debertav2::HiddenAct::Relu,
             crate::config::HiddenActivation::Silu => debertav2::HiddenAct::Gelu, // Fallback
         }
     }
-
-
 }
 
 #[cfg(test)]

@@ -26,8 +26,8 @@
 
 use std::path::Path;
 
-use serde_json::Value as JsonValue;
 use candle_core::{Device, Tensor};
+use serde_json::Value as JsonValue;
 use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::batch::{ExtractorCollator, PreprocessedBatch};
@@ -105,11 +105,7 @@ impl GLiNER2 {
                 config.max_len,
             )
         } else {
-            ExtractorCollator::with_max_len(
-                ws_tokenizer.clone(),
-                false,
-                config.max_len,
-            )
+            ExtractorCollator::with_max_len(ws_tokenizer.clone(), false, config.max_len)
         };
 
         let device = match config.device.as_str() {
@@ -167,11 +163,7 @@ impl GLiNER2 {
                 config.max_len,
             )
         } else {
-            ExtractorCollator::with_max_len(
-                ws_tokenizer.clone(),
-                false,
-                config.max_len,
-            )
+            ExtractorCollator::with_max_len(ws_tokenizer.clone(), false, config.max_len)
         };
 
         let device = match config.device.as_str() {
@@ -190,28 +182,17 @@ impl GLiNER2 {
 
     /// Download model weights (`model.safetensors`) from HuggingFace Hub.
     fn download_model_weights(model_id: &str) -> Option<std::path::PathBuf> {
-        use hf_hub::{api::sync::ApiBuilder, Repo, RepoType};
+        use hf_hub::{Repo, RepoType, api::sync::ApiBuilder};
 
-        let repo = Repo::with_revision(
-            model_id.to_string(),
-            RepoType::Model,
-            "main".to_string(),
-        );
+        let repo = Repo::with_revision(model_id.to_string(), RepoType::Model, "main".to_string());
 
-        let api = ApiBuilder::new()
-            .with_progress(true)
-            .build()
-            .ok()?;
+        let api = ApiBuilder::new().with_progress(true).build().ok()?;
 
         let repo_api = api.repo(repo);
         match repo_api.get("model.safetensors") {
             Ok(path) => Some(path),
             Err(e) => {
-                tracing::warn!(
-                    "Failed to download model weights for '{}': {}",
-                    model_id,
-                    e
-                );
+                tracing::warn!("Failed to download model weights for '{}': {}", model_id, e);
                 None
             }
         }
@@ -230,33 +211,43 @@ impl GLiNER2 {
     fn load_hf_tokenizer(config: &ExtractorConfig) -> Option<HfTokenizer> {
         // Try loading from explicit tokenizer path first
         if let Some(ref path) = config.tokenizer_path
-            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(path) {
-                tracing::info!("Loaded HuggingFace tokenizer from: {:?}", path);
-                return Some(tokenizer);
-            }
+            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(path)
+        {
+            tracing::info!("Loaded HuggingFace tokenizer from: {:?}", path);
+            return Some(tokenizer);
+        }
 
         // Try loading from model name as local directory
         let model_name = &config.model_name;
         let model_path = std::path::Path::new(model_name);
-        if model_path.exists() && model_path.is_dir()
-            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(model_path) {
-                tracing::info!("Loaded HuggingFace tokenizer from model directory: {}", model_name);
-                return Some(tokenizer);
-            }
+        if model_path.exists()
+            && model_path.is_dir()
+            && let Some(tokenizer) = Self::load_hf_tokenizer_from_path(model_path)
+        {
+            tracing::info!(
+                "Loaded HuggingFace tokenizer from model directory: {}",
+                model_name
+            );
+            return Some(tokenizer);
+        }
 
         // Try common tokenizer file patterns in current directory
         let tokenizer_files = ["tokenizer.json", "tokenizer_config.json"];
         for file in &tokenizer_files {
             let path = std::path::Path::new(file);
             if path.exists()
-                && let Ok(tokenizer) = HfTokenizer::from_file(path) {
-                    tracing::info!("Loaded HuggingFace tokenizer from: {}", file);
-                    return Some(tokenizer);
-                }
+                && let Ok(tokenizer) = HfTokenizer::from_file(path)
+            {
+                tracing::info!("Loaded HuggingFace tokenizer from: {}", file);
+                return Some(tokenizer);
+            }
         }
 
         // Download from HuggingFace Hub (default behavior)
-        tracing::info!("Downloading tokenizer for '{}' from HuggingFace Hub...", model_name);
+        tracing::info!(
+            "Downloading tokenizer for '{}' from HuggingFace Hub...",
+            model_name
+        );
         Self::download_hf_tokenizer(model_name)
     }
 
@@ -270,15 +261,17 @@ impl GLiNER2 {
         // Try loading tokenizer.json first (preferred, fast)
         let tokenizer_json = path.join("tokenizer.json");
         if tokenizer_json.exists()
-            && let Ok(tokenizer) = HfTokenizer::from_file(&tokenizer_json) {
-                return Some(tokenizer);
-            }
+            && let Ok(tokenizer) = HfTokenizer::from_file(&tokenizer_json)
+        {
+            return Some(tokenizer);
+        }
 
         // Try loading from the path directly if it's a tokenizer.json file
         if path.extension().is_some_and(|ext| ext == "json")
-            && let Ok(tokenizer) = HfTokenizer::from_file(path) {
-                return Some(tokenizer);
-            }
+            && let Ok(tokenizer) = HfTokenizer::from_file(path)
+        {
+            return Some(tokenizer);
+        }
 
         None
     }
@@ -288,18 +281,11 @@ impl GLiNER2 {
     /// Downloads `tokenizer.json` for the given model ID and loads it.
     /// The file is cached locally by `hf-hub` for future use.
     fn download_hf_tokenizer(model_id: &str) -> Option<HfTokenizer> {
-        use hf_hub::{api::sync::ApiBuilder, Repo, RepoType};
+        use hf_hub::{Repo, RepoType, api::sync::ApiBuilder};
 
-        let repo = Repo::with_revision(
-            model_id.to_string(),
-            RepoType::Model,
-            "main".to_string(),
-        );
+        let repo = Repo::with_revision(model_id.to_string(), RepoType::Model, "main".to_string());
 
-        let api = ApiBuilder::new()
-            .with_progress(true)
-            .build()
-            .ok()?;
+        let api = ApiBuilder::new().with_progress(true).build().ok()?;
 
         let repo_api = api.repo(repo);
 
@@ -631,9 +617,10 @@ impl GLiNER2 {
             max_len,
         )?;
 
-        results.into_iter().next().ok_or_else(|| {
-            GlinerError::inference("No results returned from extraction")
-        })
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| GlinerError::inference("No results returned from extraction"))
     }
 
     /// Batch extract from multiple texts using a schema.
@@ -792,20 +779,39 @@ impl GLiNER2 {
         for (schema_idx, task_type) in task_types.iter().enumerate() {
             let task_result = match task_type.as_str() {
                 "entities" => self.extract_entities_from_output(
-                    output, batch, sample_idx, schema_idx, threshold,
-                    include_confidence, include_spans,
+                    output,
+                    batch,
+                    sample_idx,
+                    schema_idx,
+                    threshold,
+                    include_confidence,
+                    include_spans,
                 )?,
                 "classifications" => self.extract_classification_from_output(
-                    output, batch, sample_idx, schema_idx, threshold,
+                    output,
+                    batch,
+                    sample_idx,
+                    schema_idx,
+                    threshold,
                     include_confidence,
                 )?,
                 "relations" => self.extract_relations_from_output(
-                    output, batch, sample_idx, schema_idx, threshold,
-                    include_confidence, include_spans,
+                    output,
+                    batch,
+                    sample_idx,
+                    schema_idx,
+                    threshold,
+                    include_confidence,
+                    include_spans,
                 )?,
                 "json_structures" => self.extract_structures_from_output(
-                    output, batch, sample_idx, schema_idx, threshold,
-                    include_confidence, include_spans,
+                    output,
+                    batch,
+                    sample_idx,
+                    schema_idx,
+                    threshold,
+                    include_confidence,
+                    include_spans,
                 )?,
                 _ => JsonValue::Null,
             };
@@ -818,32 +824,38 @@ impl GLiNER2 {
                 "classifications" => {
                     // Get task name from schema tokens
                     if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
-                        && schema_tokens.len() > 2 {
-                            let task_name = &schema_tokens[2];
-                            result.insert(task_name.clone(), task_result);
-                        }
+                        && schema_tokens.len() > 2
+                    {
+                        let task_name = &schema_tokens[2];
+                        result.insert(task_name.clone(), task_result);
+                    }
                 }
                 "relations" => {
                     if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
-                        && schema_tokens.len() > 2 {
-                            let rel_name = &schema_tokens[2];
-                            if let Some(relations) = result.get_mut("relation_extraction") {
-                                if let Some(rel_obj) = relations.as_object_mut() {
-                                    rel_obj.insert(rel_name.clone(), task_result);
-                                }
-                            } else {
-                                let mut rel_obj = serde_json::Map::new();
-                                rel_obj.insert(schema_tokens[2].clone(), task_result);
-                                result.insert("relation_extraction".to_string(), JsonValue::Object(rel_obj));
+                        && schema_tokens.len() > 2
+                    {
+                        let rel_name = &schema_tokens[2];
+                        if let Some(relations) = result.get_mut("relation_extraction") {
+                            if let Some(rel_obj) = relations.as_object_mut() {
+                                rel_obj.insert(rel_name.clone(), task_result);
                             }
+                        } else {
+                            let mut rel_obj = serde_json::Map::new();
+                            rel_obj.insert(schema_tokens[2].clone(), task_result);
+                            result.insert(
+                                "relation_extraction".to_string(),
+                                JsonValue::Object(rel_obj),
+                            );
                         }
+                    }
                 }
                 "json_structures" => {
                     if let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx)
-                        && schema_tokens.len() > 2 {
-                            let struct_name = &schema_tokens[2];
-                            result.insert(struct_name.clone(), task_result);
-                        }
+                        && schema_tokens.len() > 2
+                    {
+                        let struct_name = &schema_tokens[2];
+                        result.insert(struct_name.clone(), task_result);
+                    }
                 }
                 _ => {}
             }
@@ -874,11 +886,9 @@ impl GLiNER2 {
         let mut entities = serde_json::Map::new();
 
         // Get span representations for this sample
-        let span_outputs = output.span_representations.as_ref();
-        if span_outputs.is_none() {
+        let Some(span_outputs) = output.span_representations.as_ref() else {
             return Ok(JsonValue::Object(entities));
-        }
-        let span_outputs = span_outputs.unwrap();
+        };
         if sample_idx >= span_outputs.len() {
             return Ok(JsonValue::Object(entities));
         }
@@ -899,11 +909,9 @@ impl GLiNER2 {
         }
 
         // Get entity types from schema tokens
-        let schema_tokens = batch.schema_tokens(sample_idx, schema_idx);
-        if schema_tokens.is_none() {
+        let Some(schema_tokens) = batch.schema_tokens(sample_idx, schema_idx) else {
             return Ok(JsonValue::Object(entities));
-        }
-        let schema_tokens = schema_tokens.unwrap();
+        };
 
         // Find entity type tokens (tokens following [E] markers)
         // Schema format: ["(", "[P]", "entities", "(", "[E]", "location", "[E]", "organization", "[E]", "person", ")", ")"]
@@ -912,14 +920,13 @@ impl GLiNER2 {
         let mut special_token_counter = 0;
         for (i, token) in schema_tokens.iter().enumerate() {
             if token.starts_with('[') && token.ends_with(']') {
-                if token == "[E]"
-                    && i + 1 < schema_tokens.len() {
-                        let entity_type = schema_tokens[i + 1].clone();
-                        if !entity_type.is_empty() {
-                            entity_types.push(entity_type);
-                            entity_type_indices.push(special_token_counter);
-                        }
+                if token == "[E]" && i + 1 < schema_tokens.len() {
+                    let entity_type = schema_tokens[i + 1].clone();
+                    if !entity_type.is_empty() {
+                        entity_types.push(entity_type);
+                        entity_type_indices.push(special_token_counter);
                     }
+                }
                 special_token_counter += 1;
             }
         }
@@ -958,9 +965,10 @@ impl GLiNER2 {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
                 if let Ok(data) = emb.flatten_all()
-                    && let Ok(vec) = data.to_vec1::<f32>() {
-                        entity_emb_data.extend_from_slice(&vec);
-                    }
+                    && let Ok(vec) = data.to_vec1::<f32>()
+                {
+                    entity_emb_data.extend_from_slice(&vec);
+                }
             } else {
                 // Pad with zeros if embedding not found
                 entity_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
@@ -989,7 +997,11 @@ impl GLiNER2 {
 
         // Step 3: Transform entity embeddings using count_embed
         // Output shape: (pred_count, num_entity_types, hidden)
-        let struct_proj = match self.model.count_embed.forward(&entity_embs_tensor, pred_count) {
+        let struct_proj = match self
+            .model
+            .count_embed
+            .forward(&entity_embs_tensor, pred_count)
+        {
             Ok(out) => out.embeddings,
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
@@ -999,7 +1011,6 @@ impl GLiNER2 {
             Ok(t) => t.to_vec1().unwrap_or_default(),
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
-
 
         // Get span mask dimensions
         let span_mask_dims = span_mask.dims();
@@ -1021,7 +1032,6 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Object(entities)),
         };
 
-
         // Get spans indices
         let spans_idx_data: Vec<u32> = match spans_idx.flatten_all() {
             Ok(t) => t.to_vec1().unwrap_or_default(),
@@ -1041,7 +1051,8 @@ impl GLiNER2 {
         // Precompute scores for all spans and entity types
         // scores[span_idx][entity_idx] = max over count of sigmoid(score)
         let total_spans = mask_seq_len * mask_max_width;
-        let mut span_entity_scores: Vec<Vec<f32>> = vec![vec![0.0f32; num_entity_types]; total_spans];
+        let mut span_entity_scores: Vec<Vec<f32>> =
+            vec![vec![0.0f32; num_entity_types]; total_spans];
 
         for i in 0..mask_seq_len {
             for w in 0..mask_max_width {
@@ -1089,8 +1100,6 @@ impl GLiNER2 {
         for (entity_idx, entity_type) in entity_types.iter().enumerate() {
             let mut found_entities: Vec<JsonValue> = Vec::new();
 
-
-
             for i in 0..mask_seq_len {
                 for w in 0..mask_max_width {
                     let mask_idx = i * mask_max_width + w;
@@ -1107,29 +1116,48 @@ impl GLiNER2 {
                             let end_pos = spans_idx_data[spans_flat_idx + 1] as usize;
 
                             // Extract text from span
-                            let entity_text = if start_pos < text_tokens.len() && end_pos < text_tokens.len() {
-                                text_tokens[start_pos..=end_pos].join(" ")
-                            } else if start_pos < text_tokens.len() {
-                                text_tokens[start_pos].clone()
-                            } else {
-                                continue;
-                            };
+                            let entity_text =
+                                if start_pos < text_tokens.len() && end_pos < text_tokens.len() {
+                                    text_tokens[start_pos..=end_pos].join(" ")
+                                } else if start_pos < text_tokens.len() {
+                                    text_tokens[start_pos].clone()
+                                } else {
+                                    continue;
+                                };
 
                             let mut entity_obj = serde_json::Map::new();
-                            entity_obj.insert("text".to_string(), JsonValue::String(entity_text.clone()));
+                            entity_obj
+                                .insert("text".to_string(), JsonValue::String(entity_text.clone()));
 
                             if include_confidence {
-                                entity_obj.insert("confidence".to_string(), JsonValue::Number(
-                                    serde_json::Number::from_f64(prob as f64).unwrap_or(serde_json::Number::from_f64(0.0).unwrap())
-                                ));
+                                let confidence = serde_json::Number::from_f64(prob as f64)
+                                    .unwrap_or_else(|| serde_json::Number::from(0));
+                                entity_obj.insert(
+                                    "confidence".to_string(),
+                                    JsonValue::Number(confidence),
+                                );
                             }
 
                             if include_spans {
                                 // Get character positions from mappings
-                                let char_start = if start_pos < start_mappings.len() { start_mappings[start_pos] } else { 0 };
-                                let char_end = if end_pos < end_mappings.len() { end_mappings[end_pos] } else { char_start + entity_text.len() };
-                                entity_obj.insert("start".to_string(), JsonValue::Number(serde_json::Number::from(char_start)));
-                                entity_obj.insert("end".to_string(), JsonValue::Number(serde_json::Number::from(char_end)));
+                                let char_start = if start_pos < start_mappings.len() {
+                                    start_mappings[start_pos]
+                                } else {
+                                    0
+                                };
+                                let char_end = if end_pos < end_mappings.len() {
+                                    end_mappings[end_pos]
+                                } else {
+                                    char_start + entity_text.len()
+                                };
+                                entity_obj.insert(
+                                    "start".to_string(),
+                                    JsonValue::Number(serde_json::Number::from(char_start)),
+                                );
+                                entity_obj.insert(
+                                    "end".to_string(),
+                                    JsonValue::Number(serde_json::Number::from(char_end)),
+                                );
                             }
 
                             found_entities.push(JsonValue::Object(entity_obj));
@@ -1142,7 +1170,9 @@ impl GLiNER2 {
             found_entities.sort_by(|a, b| {
                 let conf_a = a.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let conf_b = b.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                conf_b.partial_cmp(&conf_a).unwrap_or(std::cmp::Ordering::Equal)
+                conf_b
+                    .partial_cmp(&conf_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
 
             // Suppress overlapping spans (match Python _format_spans behavior)
@@ -1187,19 +1217,22 @@ impl GLiNER2 {
         include_confidence: bool,
     ) -> Result<JsonValue> {
         // Get schema embeddings for this sample/schema.
-        let sample_schema_embs = output.schema_embeddings
+        let sample_schema_embs = output
+            .schema_embeddings
             .get(sample_idx)
             .and_then(|sample| sample.get(schema_idx))
-            .ok_or_else(|| GlinerError::inference("Missing schema embeddings for classification task"))?;
+            .ok_or_else(|| {
+                GlinerError::inference("Missing schema embeddings for classification task")
+            })?;
         if sample_schema_embs.is_empty() {
             return Ok(JsonValue::Null);
         }
 
         // Parse schema tokens and map label markers to corresponding special-token embeddings.
         // In this collator, labels use "[C]" (same token as structure fields).
-        let schema_tokens = batch
-            .schema_tokens(sample_idx, schema_idx)
-            .ok_or_else(|| GlinerError::inference("Missing schema tokens for classification task"))?;
+        let schema_tokens = batch.schema_tokens(sample_idx, schema_idx).ok_or_else(|| {
+            GlinerError::inference("Missing schema tokens for classification task")
+        })?;
         let mut labels = Vec::new();
         let mut label_emb_indices = Vec::new();
         let mut special_token_counter = 0usize;
@@ -1227,13 +1260,16 @@ impl GLiNER2 {
             return Ok(JsonValue::Null);
         }
 
-        let label_embs_tensor = Tensor::cat(&label_embs, 0)
-            .map_err(|e| GlinerError::inference(format!("Failed to stack label embeddings: {e}")))?;
+        let label_embs_tensor = Tensor::cat(&label_embs, 0).map_err(|e| {
+            GlinerError::inference(format!("Failed to stack label embeddings: {e}"))
+        })?;
         let logits = self.model.classifier.forward(&label_embs_tensor)?;
         let logits_vec: Vec<f32> = logits
             .flatten_all()
             .and_then(|t| t.to_vec1::<f32>())
-            .map_err(|e| GlinerError::inference(format!("Failed to decode classification logits: {e}")))?;
+            .map_err(|e| {
+                GlinerError::inference(format!("Failed to decode classification logits: {e}"))
+            })?;
         let probs: Vec<f32> = logits_vec
             .into_iter()
             .map(|v| 1.0 / (1.0 + (-v).exp()))
@@ -1269,7 +1305,10 @@ impl GLiNER2 {
                 best_idx = idx;
             }
         }
-        let best_label = labels.get(best_idx).cloned().unwrap_or_else(|| "unknown".to_string());
+        let best_label = labels
+            .get(best_idx)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
 
         if include_confidence {
             Ok(serde_json::json!({
@@ -1341,9 +1380,10 @@ impl GLiNER2 {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
                 if let Ok(data) = emb.flatten_all()
-                    && let Ok(vec) = data.to_vec1::<f32>() {
-                        field_emb_data.extend_from_slice(&vec);
-                    }
+                    && let Ok(vec) = data.to_vec1::<f32>()
+                {
+                    field_emb_data.extend_from_slice(&vec);
+                }
             } else {
                 field_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
             }
@@ -1358,8 +1398,19 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Array(Vec::new())),
         };
 
-        let pred_count = Self::predicted_count(output, batch, sample_idx, schema_idx, schema_tokens_embs, &self.model);
-        let struct_proj = match self.model.count_embed.forward(&field_embs_tensor, pred_count) {
+        let pred_count = Self::predicted_count(
+            output,
+            batch,
+            sample_idx,
+            schema_idx,
+            schema_tokens_embs,
+            &self.model,
+        );
+        let struct_proj = match self
+            .model
+            .count_embed
+            .forward(&field_embs_tensor, pred_count)
+        {
             Ok(out) => out.embeddings,
             Err(_) => return Ok(JsonValue::Array(Vec::new())),
         };
@@ -1387,7 +1438,12 @@ impl GLiNER2 {
         }
         let mask_seq_len = mask_dims[0];
         let mask_max_width = mask_dims[1];
-        let max_width = span_outputs.span_rep.dims().get(1).copied().unwrap_or(mask_max_width);
+        let max_width = span_outputs
+            .span_rep
+            .dims()
+            .get(1)
+            .copied()
+            .unwrap_or(mask_max_width);
         let total_spans = mask_seq_len * mask_max_width;
 
         let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
@@ -1395,13 +1451,16 @@ impl GLiNER2 {
         let end_mappings = batch.sample_end_mapping(sample_idx).unwrap_or(&[]);
 
         let rel_name = schema_tokens.get(2).cloned().unwrap_or_default();
-        let rel_threshold = Self::relation_threshold(batch, sample_idx, &rel_name).unwrap_or(threshold);
+        let rel_threshold =
+            Self::relation_threshold(batch, sample_idx, &rel_name).unwrap_or(threshold);
 
         let mut instances = Vec::new();
         for inst in 0..pred_count {
-            let mut top_fields: Vec<Option<(String, f32, usize, usize)>> = vec![None; field_names.len()];
+            let mut top_fields: Vec<Option<(String, f32, usize, usize)>> =
+                vec![None; field_names.len()];
 
-            for (field_idx, top_field) in top_fields.iter_mut().enumerate().take(field_names.len()) {
+            for (field_idx, top_field) in top_fields.iter_mut().enumerate().take(field_names.len())
+            {
                 let mut spans = Self::collect_scored_spans(
                     &span_rep_data,
                     &struct_proj_data,
@@ -1428,30 +1487,31 @@ impl GLiNER2 {
             }
 
             if top_fields.len() >= 2
-                && let (Some(head), Some(tail)) = (&top_fields[0], &top_fields[1]) {
-                    let rel_obj = if include_spans && include_confidence {
-                        serde_json::json!({
-                            "head": {"text": head.0, "confidence": head.1, "start": head.2, "end": head.3},
-                            "tail": {"text": tail.0, "confidence": tail.1, "start": tail.2, "end": tail.3},
-                        })
-                    } else if include_spans {
-                        serde_json::json!({
-                            "head": {"text": head.0, "start": head.2, "end": head.3},
-                            "tail": {"text": tail.0, "start": tail.2, "end": tail.3},
-                        })
-                    } else if include_confidence {
-                        serde_json::json!({
-                            "head": {"text": head.0, "confidence": head.1},
-                            "tail": {"text": tail.0, "confidence": tail.1},
-                        })
-                    } else {
-                        serde_json::json!({
-                            "head": head.0,
-                            "tail": tail.0,
-                        })
-                    };
-                    instances.push(rel_obj);
-                }
+                && let (Some(head), Some(tail)) = (&top_fields[0], &top_fields[1])
+            {
+                let rel_obj = if include_spans && include_confidence {
+                    serde_json::json!({
+                        "head": {"text": head.0, "confidence": head.1, "start": head.2, "end": head.3},
+                        "tail": {"text": tail.0, "confidence": tail.1, "start": tail.2, "end": tail.3},
+                    })
+                } else if include_spans {
+                    serde_json::json!({
+                        "head": {"text": head.0, "start": head.2, "end": head.3},
+                        "tail": {"text": tail.0, "start": tail.2, "end": tail.3},
+                    })
+                } else if include_confidence {
+                    serde_json::json!({
+                        "head": {"text": head.0, "confidence": head.1},
+                        "tail": {"text": tail.0, "confidence": tail.1},
+                    })
+                } else {
+                    serde_json::json!({
+                        "head": head.0,
+                        "tail": tail.0,
+                    })
+                };
+                instances.push(rel_obj);
+            }
         }
 
         Ok(JsonValue::Array(instances))
@@ -1516,9 +1576,10 @@ impl GLiNER2 {
             if emb_idx < schema_tokens_embs.len() {
                 let emb = &schema_tokens_embs[emb_idx];
                 if let Ok(data) = emb.flatten_all()
-                    && let Ok(vec) = data.to_vec1::<f32>() {
-                        field_emb_data.extend_from_slice(&vec);
-                    }
+                    && let Ok(vec) = data.to_vec1::<f32>()
+                {
+                    field_emb_data.extend_from_slice(&vec);
+                }
             } else {
                 field_emb_data.extend(std::iter::repeat_n(0.0f32, hidden_size));
             }
@@ -1533,8 +1594,19 @@ impl GLiNER2 {
             Err(_) => return Ok(JsonValue::Array(Vec::new())),
         };
 
-        let pred_count = Self::predicted_count(output, batch, sample_idx, schema_idx, schema_tokens_embs, &self.model);
-        let struct_proj = match self.model.count_embed.forward(&field_embs_tensor, pred_count) {
+        let pred_count = Self::predicted_count(
+            output,
+            batch,
+            sample_idx,
+            schema_idx,
+            schema_tokens_embs,
+            &self.model,
+        );
+        let struct_proj = match self
+            .model
+            .count_embed
+            .forward(&field_embs_tensor, pred_count)
+        {
             Ok(out) => out.embeddings,
             Err(_) => return Ok(JsonValue::Array(Vec::new())),
         };
@@ -1562,7 +1634,12 @@ impl GLiNER2 {
         }
         let mask_seq_len = mask_dims[0];
         let mask_max_width = mask_dims[1];
-        let max_width = span_outputs.span_rep.dims().get(1).copied().unwrap_or(mask_max_width);
+        let max_width = span_outputs
+            .span_rep
+            .dims()
+            .get(1)
+            .copied()
+            .unwrap_or(mask_max_width);
         let total_spans = mask_seq_len * mask_max_width;
 
         let text_tokens = batch.sample_text_tokens(sample_idx).unwrap_or(&[]);
@@ -1600,7 +1677,8 @@ impl GLiNER2 {
                 }
 
                 if dtype == "str" {
-                    spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    spans
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                     if let Some((text, conf, start, end)) = spans.into_iter().next() {
                         let v = if include_spans && include_confidence {
                             serde_json::json!({ "text": text, "confidence": conf, "start": start, "end": end })
@@ -1616,7 +1694,8 @@ impl GLiNER2 {
                         instance.insert(field_name.clone(), JsonValue::Null);
                     }
                 } else {
-                    let formatted = Self::format_spans(&mut spans, include_confidence, include_spans);
+                    let formatted =
+                        Self::format_spans(&mut spans, include_confidence, include_spans);
                     instance.insert(field_name.clone(), formatted);
                 }
             }
@@ -1644,14 +1723,16 @@ impl GLiNER2 {
     ) -> usize {
         if let Some(all_counts) = &output.count_predictions
             && let Some(sample_counts) = all_counts.get(sample_idx)
-                && let Some(count) = sample_counts.get(schema_idx) {
-                    return (*count).clamp(1, 20);
-                }
+            && let Some(count) = sample_counts.get(schema_idx)
+        {
+            return (*count).clamp(1, 20);
+        }
 
         if let Some(p_token_emb) = schema_tokens_embs.first()
-            && let Ok(out) = model.count_pred.predict_count(p_token_emb) {
-                return out.count.clamp(1, 20);
-            }
+            && let Ok(out) = model.count_pred.predict_count(p_token_emb)
+        {
+            return out.count.clamp(1, 20);
+        }
 
         5
     }
@@ -1679,7 +1760,10 @@ impl GLiNER2 {
         for i in 0..mask_seq_len {
             for w in 0..mask_max_width {
                 let mask_idx = i * mask_max_width + w;
-                if mask_idx >= total_spans || mask_idx >= mask_data.len() || mask_data[mask_idx] == 0 {
+                if mask_idx >= total_spans
+                    || mask_idx >= mask_data.len()
+                    || mask_data[mask_idx] == 0
+                {
                     continue;
                 }
 
@@ -1719,8 +1803,16 @@ impl GLiNER2 {
                 } else {
                     continue;
                 };
-                let char_start = if start_pos < start_mappings.len() { start_mappings[start_pos] } else { 0 };
-                let char_end = if end_pos < end_mappings.len() { end_mappings[end_pos] } else { char_start + entity_text.len() };
+                let char_start = if start_pos < start_mappings.len() {
+                    start_mappings[start_pos]
+                } else {
+                    0
+                };
+                let char_end = if end_pos < end_mappings.len() {
+                    end_mappings[end_pos]
+                } else {
+                    char_start + entity_text.len()
+                };
                 spans.push((entity_text, prob, char_start, char_end));
             }
         }
@@ -1739,7 +1831,9 @@ impl GLiNER2 {
         spans.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let mut selected: Vec<(String, f32, usize, usize)> = Vec::new();
         for candidate in spans.iter() {
-            let overlap = selected.iter().any(|s| !(candidate.3 <= s.2 || candidate.2 >= s.3));
+            let overlap = selected
+                .iter()
+                .any(|s| !(candidate.3 <= s.2 || candidate.2 >= s.3));
             if !overlap {
                 selected.push(candidate.clone());
             }
@@ -1763,7 +1857,11 @@ impl GLiNER2 {
         JsonValue::Array(formatted)
     }
 
-    fn relation_threshold(batch: &PreprocessedBatch, sample_idx: usize, rel_name: &str) -> Option<f32> {
+    fn relation_threshold(
+        batch: &PreprocessedBatch,
+        sample_idx: usize,
+        rel_name: &str,
+    ) -> Option<f32> {
         let schema_json = batch.original_schemas.get(sample_idx)?;
         schema_json
             .get("relation_metadata")
@@ -1783,7 +1881,10 @@ impl GLiNER2 {
         let Some(schema_json) = batch.original_schemas.get(sample_idx) else {
             return ("list".to_string(), None, Vec::new());
         };
-        let Some(structs) = schema_json.get("json_structures").and_then(|v| v.as_array()) else {
+        let Some(structs) = schema_json
+            .get("json_structures")
+            .and_then(|v| v.as_array())
+        else {
             return ("list".to_string(), None, Vec::new());
         };
 
@@ -1962,9 +2063,12 @@ mod tests {
         let schema_builder = engine.create_schema();
         assert!(schema_builder.build().is_err()); // Empty schema is invalid
 
-        let schema = engine.create_schema()
-            .entity("person").done()
-            .entity("company").done()
+        let schema = engine
+            .create_schema()
+            .entity("person")
+            .done()
+            .entity("company")
+            .done()
             .build();
         assert!(schema.is_ok());
     }

@@ -184,10 +184,7 @@ impl GlinerError {
     }
 
     /// Create a model loading error with path.
-    pub fn model_loading_with_path(
-        message: impl Into<String>,
-        path: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn model_loading_with_path(message: impl Into<String>, path: impl Into<PathBuf>) -> Self {
         Self::ModelLoading {
             message: message.into(),
             path: Some(path.into()),
@@ -215,10 +212,7 @@ impl GlinerError {
     ) -> Self {
         let layer_name = layer_name.into();
         Self::WeightLoading {
-            message: format!(
-                "Weight shape mismatch for layer '{}'",
-                layer_name
-            ),
+            message: format!("Weight shape mismatch for layer '{}'", layer_name),
             layer_name,
             expected_shape,
             actual_shape,
